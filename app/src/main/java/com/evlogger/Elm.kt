@@ -64,6 +64,8 @@ object Elm {
     @Volatile var lastValues: Map<String, String> = emptyMap()
     @Volatile var status: String = "не подключено"
     @Volatile var currentFile: File? = null
+    @Volatile var lastRaw: String = ""
+    @Volatile var initLog: String = ""
     var onTerminalLine: ((String) -> Unit)? = null
 
     val connected: Boolean get() = socket?.isConnected == true
@@ -74,9 +76,11 @@ object Elm {
         val s = dev.createRfcommSocketToServiceRecord(SPP)
         s.connect()
         socket = s; input = s.inputStream; output = s.outputStream
-        for (c in listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATCAF1", "ATSP0")) {
-            send(c, 4000)
+        val sb = StringBuilder()
+        for (c in listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATCAF1", "ATSP0", "ATI", "ATDP", "ATRV")) {
+            sb.append("$c -> ").append(send(c, 4000).replace("\n", " | ")).append('\n')
         }
+        initLog = sb.toString()
         status = "подключено: ${dev.name}"
     }
 
@@ -113,7 +117,11 @@ object Elm {
             if (p.size < 4) null else Pid(p[0], p[1], p[2].uppercase(), p[3])
         }
 
-    private fun parse(pid: Pid, resp: String): String {
+    private fun parse(pid: Pid, resp: String): String = try {
+        parseUnsafe(pid, resp)
+    } catch (e: Exception) { "" }
+
+    private fun parseUnsafe(pid: Pid, resp: String): String {
         val clean = resp.replace(" ", "").replace("\n", "").uppercase()
         if (clean.contains("NODATA") || clean.contains("ERROR") || clean.contains("?") || clean.isEmpty()) return ""
         val mode = pid.cmd.substring(0, 2).toInt(16) + 0x40
@@ -134,22 +142,29 @@ object Elm {
         currentFile = f
         logging = true
         f.bufferedWriter().use { w ->
-            w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh\n")
+            initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
+            w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
+            w.flush()
             var lastHeader = ""
             while (logging && connected) {
                 val vals = LinkedHashMap<String, String>()
+                val raws = ArrayList<String>()
                 for (p in pids) {
                     if (!logging) break
                     val h = if (p.header == "-") "" else p.header
                     if (h != lastHeader) {
                         send(if (h.isEmpty()) "ATSH7DF" else "ATSH$h"); lastHeader = h
                     }
-                    vals[p.name] = parse(p, send(p.cmd))
+                    val resp = send(p.cmd)
+                    lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
+                    raws.add(lastRaw)
+                    vals[p.name] = parse(p, resp)
                 }
                 val g = gps()
                 val now = System.currentTimeMillis()
                 w.write("$now,${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(Date(now))},")
-                w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third}\n")
+                val rawCell = raws.joinToString(" ## ").replace("\"", "'")
+                w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
                 w.flush()
                 lastValues = vals
             }

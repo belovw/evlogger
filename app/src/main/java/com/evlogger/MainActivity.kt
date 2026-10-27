@@ -47,6 +47,7 @@ class MainActivity : Activity() {
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
                 v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
+                if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
                 append("gps_speed = %.1f км/ч".format(gpsSpeed))
             }
             ui.postDelayed(this, 1000)
