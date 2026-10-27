@@ -80,6 +80,9 @@ object Elm {
         for (c in listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATCAF1", "ATSP0", "ATI", "ATDP", "ATRV")) {
             sb.append("$c -> ").append(send(c, 4000).replace("\n", " | ")).append('\n')
         }
+        // Первый запрос запускает автопоиск протокола, ждём его отдельно
+        sb.append("0100 -> ").append(send("0100", 15000).replace("\n", " | ")).append('\n')
+        sb.append("ATDPN -> ").append(send("ATDPN", 3000).replace("\n", " | ")).append('\n')
         initLog = sb.toString()
         status = "подключено: ${dev.name}"
     }
@@ -98,8 +101,10 @@ object Elm {
         while (i.available() > 0) i.read()
         o.write((cmd + "\r").toByteArray()); o.flush()
         val sb = StringBuilder()
-        val end = System.currentTimeMillis() + timeoutMs
+        var end = System.currentTimeMillis() + timeoutMs
+        var extended = false
         while (System.currentTimeMillis() < end) {
+            if (!extended && sb.contains("SEARCHING")) { end += 12000; extended = true }
             if (i.available() > 0) {
                 val ch = i.read().toChar()
                 if (ch == '>') break
@@ -122,13 +127,16 @@ object Elm {
     } catch (e: Exception) { "" }
 
     private fun parseUnsafe(pid: Pid, resp: String): String {
-        val clean = resp.replace(" ", "").replace("\n", "").uppercase()
-        if (clean.contains("NODATA") || clean.contains("ERROR") || clean.contains("?") || clean.isEmpty()) return ""
         val mode = pid.cmd.substring(0, 2).toInt(16) + 0x40
         val prefix = "%02X".format(mode) + pid.cmd.substring(2)
-        val idx = clean.indexOf(prefix)
-        if (idx < 0) return ""
-        val data = clean.substring(idx + prefix.length)
+        // Разбираем построчно: при нескольких блоках берём первую подходящую строку
+        var data = ""
+        for (line in resp.lines()) {
+            val clean = line.replace(" ", "").uppercase()
+            val idx = clean.indexOf(prefix)
+            if (idx >= 0) { data = clean.substring(idx + prefix.length); break }
+        }
+        if (data.isEmpty()) return ""
         val bytes = IntArray(minOf(4, data.length / 2)) { data.substring(it * 2, it * 2 + 2).toInt(16) }
         return try {
             "%.2f".format(Locale.US, Formula.eval(pid.formula, bytes))
