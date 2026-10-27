@@ -153,6 +153,7 @@ object Elm {
             initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
             w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
             w.flush()
+            send("ATSH7DF"); send("ATAR")
             var lastHeader = ""
             while (logging && connected) {
                 val vals = LinkedHashMap<String, String>()
@@ -161,7 +162,9 @@ object Elm {
                     if (!logging) break
                     val h = if (p.header == "-") "" else p.header
                     if (h != lastHeader) {
-                        send(if (h.isEmpty()) "ATSH7DF" else "ATSH$h"); lastHeader = h
+                        // Общий запрос 7DF, ответ принимаем только с адреса блока (ATCRA)
+                        send("ATSH7DF")
+                        send(if (h.isEmpty()) "ATAR" else "ATCRA$h"); lastHeader = h
                     }
                     val resp = send(p.cmd)
                     lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
