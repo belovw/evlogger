@@ -77,8 +77,14 @@ class MainActivity : Activity() {
         cmdBox = EditText(this).apply { hint = "Команда ELM327, например ATRV или 22F190"; isSingleLine = true }
         root.addView(cmdBox)
         btn("Отправить команду") { sendCmd() }
+        btn("Скопировать текст терминала") {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("terminal", term.text))
+            toast("Скопировано")
+        }
         term = TextView(this).apply {
-            textSize = 12f; movementMethod = ScrollingMovementMethod(); maxLines = 12
+            textSize = 12f
+            setTextIsSelectable(true)
         }
         root.addView(term)
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
