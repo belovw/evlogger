@@ -33,6 +33,9 @@ class MainActivity : Activity() {
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
     private lateinit var hdrBox: EditText
+    private lateinit var stepBox: EditText
+    private lateinit var dot: TextView
+    private lateinit var dotLabel: TextView
     private lateinit var fromBox: EditText
     private lateinit var toBox: EditText
     private lateinit var didBox: EditText
@@ -46,6 +49,14 @@ class MainActivity : Activity() {
     private val refresh = object : Runnable {
         override fun run() {
             val v = Elm.lastValues
+            val now = System.currentTimeMillis()
+            val (color, label) = when {
+                Elm.connecting -> Pair(0xFFF9A825.toInt(), "подключаюсь")
+                Elm.connected && Elm.logging && now - Elm.lastDataMs > 10000 -> Pair(0xFFEF6C00.toInt(), "адаптер есть, машина не отвечает")
+                Elm.connected -> Pair(0xFF2E7D32.toInt(), "подключено")
+                else -> Pair(0xFFC62828.toInt(), "нет связи")
+            }
+            dot.setTextColor(color); dotLabel.text = label; dotLabel.setTextColor(color)
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 append("Статус: ${Elm.status}\n")
@@ -71,6 +82,16 @@ class MainActivity : Activity() {
             this.text = text; setOnClickListener { onClick() }
             root.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply { text = "EV Logger"; textSize = 18f },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        dotLabel = TextView(this).apply { textSize = 12f; setPadding(0, 0, 12, 0) }
+        dot = TextView(this).apply { text = "●"; textSize = 30f }
+        header.addView(dotLabel); header.addView(dot)
+        root.addView(header)
         spinner = Spinner(this); root.addView(spinner)
         btn("1. Подключиться к ELM327") { connect() }
         btn("2. Старт записи лога") { startLog() }
@@ -89,6 +110,7 @@ class MainActivity : Activity() {
         hdrBox = field("Адрес запроса: 7DF = всем блокам (рекомендуется)", "7DF")
         fromBox = field("DID с (hex)", "0000")
         toBox = field("DID по (hex)", "FFFF")
+        stepBox = field("Шаг перебора (1 = каждый DID, 16 = каждый 16-й)", "1")
         didBox = field("DID для мониторинга: 0100 0801-0820 ... (пусто = все найденные последним сканом)", "")
         btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
         btn("Найти адреса блоков (700-7FF)") { startFindEcus() }
@@ -162,11 +184,13 @@ class MainActivity : Activity() {
     private fun connect() {
         val d = devices.getOrNull(spinner.selectedItemPosition) ?: return toast("Сначала спарь ELM327 в настройках Bluetooth телефона")
         Elm.status = "подключаюсь..."
+        Elm.connecting = true
         Thread {
             try {
                 Elm.connect(d)
                 getSharedPreferences("evlogger", Context.MODE_PRIVATE).edit().putString("last_mac", d.address).apply()
             } catch (e: Exception) { Elm.status = "ошибка: ${e.message}" }
+            Elm.connecting = false
         }.start()
     }
 
@@ -211,7 +235,9 @@ class MainActivity : Activity() {
         val b = toBox.text.toString().trim().toIntOrNull(16)
         if (h.toIntOrNull(16) == null || a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь адрес и диапазон (hex)")
         startForegroundService(Intent(this, KeepAliveService::class.java))
-        Thread { Elm.scanDids(getExternalFilesDir(null)!!, h, a, b) }.start()
+        val st = stepBox.text.toString().trim().toIntOrNull() ?: 1
+        if (st < 1 || st > 4096) return toast("Шаг от 1 до 4096")
+        Thread { Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st) }.start()
     }
 
     private fun startWatch() {

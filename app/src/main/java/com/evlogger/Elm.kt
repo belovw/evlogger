@@ -65,6 +65,8 @@ object Elm {
     @Volatile var status: String = "не подключено"
     @Volatile var currentFile: File? = null
     @Volatile var appVersion: String = "?"
+    @Volatile var lastDataMs: Long = 0L
+    @Volatile var connecting = false
     @Volatile var lastRaw: String = ""
     @Volatile var initLog: String = ""
     var onTerminalLine: ((String) -> Unit)? = null
@@ -150,6 +152,7 @@ object Elm {
         val f = File(dir, "log_$stamp.csv")
         currentFile = f
         logging = true
+        lastDataMs = System.currentTimeMillis()
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n")
             initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
@@ -180,6 +183,7 @@ object Elm {
                 w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
                 w.flush()
                 lastValues = vals
+                if (vals.values.any { it.isNotEmpty() }) lastDataMs = now
             }
         }
         logging = false
@@ -236,12 +240,12 @@ object Elm {
     }
 
     /** Перебор DID. Пишет в файл только найденные (положительные ответы 62 xx xx ...). */
-    fun scanDids(dir: File, req: String, from: Int, to: Int) {
+    fun scanDids(dir: File, req: String, from: Int, to: Int, step: Int = 1) {
         val f = File(dir, "scan_${req}_${stamp()}.txt"); currentFile = f
         scanning = true; found.clear()
         var pos = 0; var neg = 0; var none = 0
         f.bufferedWriter().use { w ->
-            w.write("# app version: $appVersion\n# scan request=$req DID %04X..%04X\n".format(from, to))
+            w.write("# app version: $appVersion\n# scan request=$req DID %04X..%04X step=$step\n".format(from, to))
             setupAddressing(req)
             var did = from
             while (scanning && connected && did <= to) {
@@ -255,9 +259,9 @@ object Elm {
                     val code = clean(r).substringAfter("7F22", "").take(2)
                     if (code != "31" && code != "11" && code != "12") { w.write("# NEG $d 7F22$code\n"); w.flush() }
                 } else none++
-                did++
+                did += step
             }
-            w.write("# end: found=$pos neg=$neg none=$none last=%04X\n".format(did - 1))
+            w.write("# end: found=$pos neg=$neg none=$none last=%04X\n".format(maxOf(from, did - step)))
             restoreAddressing()
         }
         scanning = false
