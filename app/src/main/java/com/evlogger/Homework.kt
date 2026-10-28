@@ -1,6 +1,11 @@
 package com.evlogger
 
 import android.app.Activity
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.app.AlertDialog
 import android.content.Intent
 import androidx.core.content.FileProvider
@@ -16,6 +21,9 @@ import java.util.zip.ZipOutputStream
 object Homework {
     @Volatile var running = false
     @Volatile var abort = false
+    /** Текущая инструкция на экране (пусто = не показывать) и момент конца шага для обратного отсчёта. */
+    @Volatile var banner = ""
+    @Volatile var stepEndMs = 0L
 
     private class Step(val cmd: String, val args: List<String>)
 
@@ -40,18 +48,45 @@ object Homework {
         return out
     }
 
+    private fun beep(act: Activity) {
+        try {
+            val v = act.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            v.vibrate(VibrationEffect.createOneShot(700, VibrationEffect.DEFAULT_AMPLITUDE))
+            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100).startTone(ToneGenerator.TONE_PROP_BEEP2, 400)
+        } catch (e: Exception) {}
+    }
+
+    /** Подсказки вида «00:00 Заведи ДВС | 01:30 Выключи ДВС»: по таймеру меняют инструкцию, пикают и пишут время в notes. */
+    private fun runCues(act: Activity, spec: String, seconds: Long, note: (String) -> Unit, stop: () -> Unit) {
+        val cues = spec.split("|").mapNotNull { c ->
+            val m = Regex("""^\s*(\d+):(\d+)\s+(.*)$""").find(c) ?: return@mapNotNull null
+            Pair(m.groupValues[1].toLong() * 60 + m.groupValues[2].toLong(), m.groupValues[3].trim())
+        }.sortedBy { it.first }
+        val start = System.currentTimeMillis()
+        stepEndMs = start + seconds * 1000
+        Thread {
+            var i = 0
+            while (!abort && System.currentTimeMillis() < stepEndMs) {
+                val el = (System.currentTimeMillis() - start) / 1000
+                while (i < cues.size && cues[i].first <= el) { banner = cues[i].second; note("cue: ${cues[i].second}"); beep(act); i++ }
+                Thread.sleep(300)
+            }
+            banner = ""; stop()
+        }.start()
+    }
+
     fun title(act: Activity): String = try { load(act).firstOrNull { it.cmd == "title" }?.args?.firstOrNull() ?: "без описания" } catch (e: Exception) { "не удалось прочитать задание" }
 
-    fun start(act: Activity, toast: (String) -> Unit) {
+    fun start(act: Activity, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
         if (running) return toast("Задание уже выполняется")
         if (!Elm.connected) return toast("Сначала подключись")
         if (Elm.logging || Elm.monitoring || Elm.scanning) return toast("Останови запись/сканер")
         AlertDialog.Builder(act).setTitle("Домашнее задание").setMessage(title(act) + "\n\nНачать?")
-            .setPositiveButton("Начать") { _, _ -> Thread { run(act, toast) }.start() }
+            .setPositiveButton("Начать") { _, _ -> Thread { run(act, gps, toast) }.start() }
             .setNegativeButton("Отмена", null).show()
     }
 
-    private fun run(act: Activity, toast: (String) -> Unit) {
+    private fun run(act: Activity, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
         running = true; abort = false
         val dir = act.getExternalFilesDir(null)!!
         val t0 = System.currentTimeMillis()
@@ -84,11 +119,19 @@ object Homework {
                         val r = range(st.args.getOrElse(1) { "" }) ?: continue
                         note("scan ${st.args}"); Elm.scanDids(dir, st.args[0].uppercase(), r.first, r.second, st.args.getOrNull(2)?.toIntOrNull() ?: 1)
                     }
+                    "log" -> {
+                        val sec = st.args.getOrNull(0)?.toLongOrNull() ?: 60
+                        note("log ${st.args}")
+                        val custom = File(dir, "pids.txt")
+                        val list = Elm.loadPids(if (custom.exists()) custom.readText() else act.assets.open("pids.txt").bufferedReader().readText())
+                        runCues(act, st.args.getOrElse(1) { "" }, sec, ::note) { Elm.logging = false }
+                        Elm.logLoop(dir, list, gps)
+                    }
                     "watch" -> {
                         val list = dids(st.args.getOrElse(1) { "" })
                         val sec = st.args.getOrNull(2)?.toLongOrNull() ?: 60
                         note("watch ${st.args}")
-                        Thread { Thread.sleep(sec * 1000); Elm.scanning = false }.start()
+                        runCues(act, st.args.getOrElse(3) { "" }, sec, ::note) { Elm.scanning = false }
                         Elm.watchDids(dir, st.args[0].uppercase(), list)
                     }
                 }
@@ -110,7 +153,7 @@ object Homework {
         } catch (e: Exception) {
             note("error: ${e.message}"); toast("Ошибка задания: ${e.message}")
         } finally {
-            running = false; Elm.scanning = false; Elm.scanProgress = ""
+            running = false; banner = ""; Elm.scanning = false; Elm.logging = false; Elm.scanProgress = ""
         }
     }
 }

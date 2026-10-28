@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var toBox: EditText
     private lateinit var didBox: EditText
     private var devices: List<BluetoothDevice> = emptyList()
+    private lateinit var bannerView: TextView
     private val ui = Handler(Looper.getMainLooper())
 
     @Volatile private var gpsLat = 0.0
@@ -57,6 +58,12 @@ class MainActivity : Activity() {
                 else -> Pair(0xFFC62828.toInt(), "нет связи")
             }
             dot.setTextColor(color); dotLabel.text = label; dotLabel.setTextColor(color)
+            val b = Homework.banner
+            if (b.isEmpty()) bannerView.visibility = android.view.View.GONE else {
+                val left = maxOf(0L, (Homework.stepEndMs - now) / 1000)
+                bannerView.text = "▶ $b\nдо конца этапа: %d:%02d".format(left / 60, left % 60)
+                bannerView.visibility = android.view.View.VISIBLE
+            }
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 append("Статус: ${Elm.status}\n")
@@ -92,9 +99,15 @@ class MainActivity : Activity() {
         dot = TextView(this).apply { text = "●"; textSize = 30f }
         header.addView(dotLabel); header.addView(dot)
         root.addView(header)
+        bannerView = TextView(this).apply {
+            textSize = 22f; setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(0xFF000000.toInt()); setBackgroundColor(0xFFFFD54F.toInt())
+            setPadding(24, 24, 24, 24); visibility = android.view.View.GONE
+        }
+        root.addView(bannerView)
         spinner = Spinner(this); root.addView(spinner)
         btn("1. Подключиться к ELM327") { connect() }
-        btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this) { toast(it) } }
+        btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("2. Старт записи лога") { startLog() }
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
