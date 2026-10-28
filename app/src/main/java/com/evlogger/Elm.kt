@@ -289,6 +289,56 @@ object Elm {
         scanning = false; scanProgress = ""
     }
 
+    private fun hexAscii(h: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i + 1 < h.length) {
+            val b = h.substring(i, i + 2).toIntOrNull(16) ?: 0
+            sb.append(if (b in 0x20..0x7E) b.toChar() else '.')
+            i += 2
+        }
+        return sb.toString().trim('.')
+    }
+
+    /** Берёт найденные блоки из последнего ecus_*.txt и читает паспортные DID (названия, номера деталей). VIN не читаем. */
+    fun identifyEcus(dir: File) {
+        val src = dir.listFiles { x -> x.name.startsWith("ecus_") && x.name.endsWith(".txt") }
+            ?.maxByOrNull { it.lastModified() }
+        if (src == null) { scanProgress = "нет файла ecus_*, сначала найди адреса блоков"; return }
+        val pairs = ArrayList<Pair<String, String>>()
+        for (line in src.readLines()) {
+            if (line.startsWith("#") || !line.contains("->")) continue
+            val req = line.substringBefore("->").trim()
+            if (req == "7DF") continue
+            val resp = clean(line.substringAfter("->")).take(3)
+            if (req.length == 3 && resp.length == 3) pairs.add(Pair(req, resp))
+        }
+        val f = File(dir, "ecuinfo_${stamp()}.txt"); currentFile = f
+        scanning = true
+        f.bufferedWriter().use { w ->
+            w.write("# app version: $appVersion\n# паспортные данные блоков: запрос/ответ, DID, hex | текст\n")
+            send("ATCAF1"); send("ATH0"); send("ATST32")
+            for ((req, resp) in pairs) {
+                if (!scanning || !connected) break
+                send("ATSH$req"); send("ATCRA$resp")
+                for (did in listOf("F187", "F188", "F189", "F18A", "F191", "F192", "F193", "F194", "F197")) {
+                    if (!scanning || !connected) break
+                    scanProgress = "$req/$resp 22$did"
+                    val c = flatten(send("22$did", 800))
+                    val i = c.indexOf("62$did")
+                    if (i >= 0) {
+                        val p = c.substring(i + 6)
+                        w.write("$req/$resp $did $p | ${hexAscii(p)}\n"); w.flush()
+                    } else if (c.contains("7F22")) {
+                        w.write("# $req/$resp $did отказ ${c.substringAfter("7F22", "").take(2)}\n"); w.flush()
+                    }
+                }
+            }
+            restoreAddressing()
+        }
+        scanning = false; scanProgress = ""
+    }
+
     /** Список DID из самого свежего файла scan_*.txt (чтобы не вводить вручную). */
     fun loadFoundFromFile(dir: File): List<String> {
         val f = dir.listFiles { x -> x.name.startsWith("scan_") && x.name.endsWith(".txt") }

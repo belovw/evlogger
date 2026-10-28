@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         didBox = field("DID для мониторинга: 0100 0801-0820 ... (пусто = все найденные последним сканом)", "")
         btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
         btn("Найти адреса блоков (700-7FF)") { startFindEcus() }
+        btn("Опознать найденные блоки (названия)") { startIdentEcus() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
         btn("Стоп сканера / мониторинга") { Elm.scanning = false }
@@ -139,6 +140,9 @@ class MainActivity : Activity() {
             devices = ad.bondedDevices.toList()
             spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
                 devices.map { "${it.name} (${it.address})" })
+            val saved = getSharedPreferences("evlogger", Context.MODE_PRIVATE).getString("last_mac", null)
+            val idx = devices.indexOfFirst { it.address == saved }
+            if (idx >= 0) spinner.setSelection(idx)
         } catch (e: SecurityException) {
             toast("Нужно разрешение Bluetooth")
         }
@@ -159,7 +163,10 @@ class MainActivity : Activity() {
         val d = devices.getOrNull(spinner.selectedItemPosition) ?: return toast("Сначала спарь ELM327 в настройках Bluetooth телефона")
         Elm.status = "подключаюсь..."
         Thread {
-            try { Elm.connect(d) } catch (e: Exception) { Elm.status = "ошибка: ${e.message}" }
+            try {
+                Elm.connect(d)
+                getSharedPreferences("evlogger", Context.MODE_PRIVATE).edit().putString("last_mac", d.address).apply()
+            } catch (e: Exception) { Elm.status = "ошибка: ${e.message}" }
         }.start()
     }
 
@@ -187,6 +194,13 @@ class MainActivity : Activity() {
         if (busy()) return toast("Останови текущую запись или сканер")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.findEcus(getExternalFilesDir(null)!!) }.start()
+    }
+
+    private fun startIdentEcus() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.identifyEcus(getExternalFilesDir(null)!!) }.start()
     }
 
     private fun startScan() {
