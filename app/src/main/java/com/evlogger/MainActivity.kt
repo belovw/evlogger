@@ -98,6 +98,7 @@ class MainActivity : Activity() {
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
+        btn("Обновить приложение (скачать последнюю версию)") { updateApp() }
 
         root.addView(TextView(this).apply {
             text = "\nПоиск данных батареи (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено, двигаться нельзя. Запрос идёт всем блокам, в файле видно, кто ответил."
@@ -306,6 +307,30 @@ class MainActivity : Activity() {
             type = "text/plain"; putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }, "Отправить ${f.name}"))
+    }
+
+    private fun updateApp() {
+        if (busy()) return toast("Останови запись/сканер перед обновлением")
+        toast("Проверяю обновление…")
+        Thread {
+            try {
+                val cur = packageManager.getPackageInfo(packageName, 0).versionName?.substringAfter("0.")?.toIntOrNull() ?: 0
+                val last = Updater.latestBuild() ?: return@Thread runOnUiThread { toast("Не удалось определить версию на GitHub") }
+                if (last <= cur) return@Thread runOnUiThread { toast("Уже последняя версия (0.$cur)") }
+                runOnUiThread { toast("Новая версия 0.$last, скачиваю…") }
+                var lastShown = 0L
+                val apk = Updater.download(this) { p ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastShown > 1500) { lastShown = now; runOnUiThread { Elm.scanProgress = "обновление: $p" } }
+                }
+                runOnUiThread {
+                    Elm.scanProgress = ""
+                    if (!Updater.install(this, apk)) toast("Разреши установку для EV Logger и нажми «Обновить» ещё раз")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Ошибка обновления: ${e.message}") }
+            }
+        }.start()
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
