@@ -167,9 +167,16 @@ object Elm {
                     if (!logging) break
                     val h = if (p.header == "-") "" else p.header
                     if (h != lastHeader) {
-                        // Общий запрос 7DF, ответ принимаем только с адреса блока (ATCRA)
-                        send("ATSH7DF")
-                        send(if (h.isEmpty()) "ATAR" else "ATCRA$h"); lastHeader = h
+                        if (h.contains(">")) {
+                            // Личный запрос блоку: "7A1>7A9" = запрос на 7A1, ответ с 7A9
+                            val parts = h.split(">")
+                            send("ATSH${parts[0]}"); send("ATCRA${parts[1]}")
+                        } else {
+                            // Общий запрос 7DF, ответ принимаем только с адреса блока (ATCRA)
+                            send("ATSH7DF")
+                            send(if (h.isEmpty()) "ATAR" else "ATCRA$h")
+                        }
+                        lastHeader = h
                     }
                     val resp = send(p.cmd)
                     lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
