@@ -27,10 +27,24 @@ object Homework {
 
     private class Step(val cmd: String, val args: List<String>)
 
-    private fun load(act: Activity): List<Step> =
-        act.assets.open("homework.txt").bufferedReader().readLines()
-            .filter { it.isNotBlank() && !it.trimStart().startsWith("#") }
+    private const val REMOTE = "https://raw.githubusercontent.com/belovw/evlogger/main/homework.txt"
+
+    private fun parse(text: String): List<Step> =
+        text.lines().filter { it.isNotBlank() && !it.trimStart().startsWith("#") }
             .map { l -> val p = l.split(";").map { it.trim() }; Step(p[0].lowercase(), p.drop(1)) }
+
+    /** Сначала файл homework.txt из репозитория на GitHub (обновляется без новой версии приложения), иначе встроенный. */
+    private fun fetch(act: Activity): Pair<List<Step>, String> {
+        try {
+            val c = java.net.URL(REMOTE + "?t=" + System.currentTimeMillis()).openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 8000; c.readTimeout = 8000; c.useCaches = false
+            try { return Pair(parse(c.inputStream.bufferedReader().readText()), "с GitHub") } finally { c.disconnect() }
+        } catch (e: Exception) {}
+        return Pair(parse(act.assets.open("homework.txt").bufferedReader().readText()), "встроенное, нет связи с GitHub")
+    }
+
+    private fun build(act: Activity): Int =
+        try { act.packageManager.getPackageInfo(act.packageName, 0).versionName?.substringAfter("0.")?.toIntOrNull() ?: 0 } catch (e: Exception) { 0 }
 
     private fun range(s: String): Pair<Int, Int>? {
         val p = s.split("-"); val a = p.getOrNull(0)?.toIntOrNull(16); val b = p.getOrNull(1)?.toIntOrNull(16)
@@ -75,18 +89,30 @@ object Homework {
         }.start()
     }
 
-    fun title(act: Activity): String = try { load(act).firstOrNull { it.cmd == "title" }?.args?.firstOrNull() ?: "без описания" } catch (e: Exception) { "не удалось прочитать задание" }
-
     fun start(act: Activity, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
         if (running) return toast("Задание уже выполняется")
         if (!Elm.connected) return toast("Сначала подключись")
         if (Elm.logging || Elm.monitoring || Elm.scanning) return toast("Останови запись/сканер")
-        AlertDialog.Builder(act).setTitle("Домашнее задание").setMessage(title(act) + "\n\nНачать?")
-            .setPositiveButton("Начать") { _, _ -> Thread { run(act, gps, toast) }.start() }
-            .setNegativeButton("Отмена", null).show()
+        toast("Загружаю задание…")
+        Thread {
+            val (steps, src) = try { fetch(act) } catch (e: Exception) { return@Thread act.runOnUiThread { toast("Не удалось прочитать задание") } }
+            val title = steps.firstOrNull { it.cmd == "title" }?.args?.firstOrNull() ?: "без описания"
+            val need = steps.firstOrNull { it.cmd == "needs" }?.args?.firstOrNull()?.toIntOrNull() ?: 0
+            act.runOnUiThread {
+                if (build(act) < need) {
+                    AlertDialog.Builder(act).setTitle("Нужно обновить приложение")
+                        .setMessage("Задание требует версию 0.$need, у вас 0.${build(act)}. Нажми «Обновить приложение».")
+                        .setPositiveButton("OK", null).show()
+                } else {
+                    AlertDialog.Builder(act).setTitle("Домашнее задание ($src)").setMessage(title + "\n\nНачать?")
+                        .setPositiveButton("Начать") { _, _ -> Thread { run(act, steps, gps, toast) }.start() }
+                        .setNegativeButton("Отмена", null).show()
+                }
+            }
+        }.start()
     }
 
-    private fun run(act: Activity, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
+    private fun run(act: Activity, steps: List<Step>, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
         running = true; abort = false
         val dir = act.getExternalFilesDir(null)!!
         val t0 = System.currentTimeMillis()
@@ -96,7 +122,6 @@ object Homework {
         note("homework started, app ${Elm.appVersion}")
         try {
             act.startForegroundService(Intent(act, KeepAliveService::class.java))
-            val steps = load(act)
             for ((i, st) in steps.withIndex()) {
                 if (abort || !Elm.connected) break
                 Elm.scanProgress = "задание: шаг ${i + 1}/${steps.size}"
@@ -109,6 +134,17 @@ object Homework {
                         }
                         latch.await()
                         note("note done: ${st.args.getOrElse(0) { "" }}")
+                    }
+                    "update" -> {
+                        val last = Updater.latestBuild() ?: 0
+                        if (last > build(act)) {
+                            note("update: 0.${build(act)} -> 0.$last")
+                            Elm.scanProgress = "скачиваю обновление 0.$last"
+                            val apk = Updater.download(act) { }
+                            act.runOnUiThread { Updater.install(act, apk) }
+                            abort = true
+                            note("update installer started; homework stopped, run it again after install")
+                        } else note("update: already latest 0.${build(act)}")
                     }
                     "survey" -> {
                         val only = st.args.getOrElse(0) { "" }.uppercase().split(Regex("\\s+")).filter { it.length == 3 }.toSet()
