@@ -89,7 +89,7 @@ class MainActivity : Activity() {
         hdrBox = field("Адрес запроса: 7DF = всем блокам (рекомендуется)", "7DF")
         fromBox = field("DID с (hex)", "0000")
         toBox = field("DID по (hex)", "FFFF")
-        didBox = field("DID для мониторинга через пробел (пусто = найденные сканером)", "")
+        didBox = field("DID для мониторинга: 0100 0801-0820 ... (пусто = все найденные последним сканом)", "")
         btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
@@ -197,8 +197,17 @@ class MainActivity : Activity() {
         if (busy()) return toast("Останови текущую запись или сканер")
         val h = hdrBox.text.toString().trim().uppercase()
         if (h.toIntOrNull(16) == null) return toast("Проверь адрес блока")
-        val typed = didBox.text.toString().trim().uppercase().split(Regex("[\\s,;]+")).filter { it.length == 4 && it.toIntOrNull(16) != null }
-        val list = if (typed.isNotEmpty()) typed else Elm.found.toList()
+        val typed = ArrayList<String>()
+        for (tok in didBox.text.toString().trim().uppercase().split(Regex("[\\s,;]+"))) {
+            if (tok.isEmpty()) continue
+            if (tok.contains("-")) {
+                val p = tok.split("-")
+                val x = p[0].toIntOrNull(16); val y = p.getOrNull(1)?.toIntOrNull(16)
+                if (x != null && y != null && x <= y && y - x < 512) for (v in x..y) typed.add("%04X".format(v))
+            } else if (tok.length == 4 && tok.toIntOrNull(16) != null) typed.add(tok)
+        }
+        val dir = getExternalFilesDir(null)!!
+        val list = if (typed.isNotEmpty()) typed else Elm.found.toList().ifEmpty { Elm.loadFoundFromFile(dir) }
         if (list.isEmpty()) return toast("Нет DID: сначала скан или впиши вручную")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.watchDids(getExternalFilesDir(null)!!, h, list) }.start()

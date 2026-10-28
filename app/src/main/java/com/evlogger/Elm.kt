@@ -263,6 +263,15 @@ object Elm {
         scanning = false
     }
 
+    /** Список DID из самого свежего файла scan_*.txt (чтобы не вводить вручную). */
+    fun loadFoundFromFile(dir: File): List<String> {
+        val f = dir.listFiles { x -> x.name.startsWith("scan_") && x.name.endsWith(".txt") }
+            ?.maxByOrNull { it.lastModified() } ?: return emptyList()
+        return f.readLines().filter { !it.startsWith("#") }
+            .mapNotNull { it.trim().take(4).takeIf { d -> d.length == 4 && d.toIntOrNull(16) != null } }
+            .distinct()
+    }
+
     /** Циклически читает список DID и пишет сырые значения в CSV (для поиска тока/мощности). */
     fun watchDids(dir: File, req: String, dids: List<String>) {
         val f = File(dir, "watch_${req}_${stamp()}.csv"); currentFile = f
@@ -270,7 +279,7 @@ object Elm {
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n# request=$req\n")
             w.write("time_ms,iso," + dids.joinToString(",") + "\n"); w.flush()
-            setupAddressing(req)
+            setupAddressing(req, "ATST0F")
             while (scanning && connected) {
                 val vals = ArrayList<String>()
                 for (d in dids) {
