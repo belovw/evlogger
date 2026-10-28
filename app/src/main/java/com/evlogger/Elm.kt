@@ -365,7 +365,7 @@ object Elm {
 
     /** Обзор блоков: для каждого адреса из последнего ecus_*.txt перебирает DID (диапазон/шаг как в сканере).
      *  Пишет survey_*.txt: найденные DID со значениями и итог по блокам. Только чтение (Mode 22). */
-    fun surveyEcus(dir: File, from: Int, to: Int, step: Int) {
+    fun surveyEcus(dir: File, from: Int, to: Int, step: Int, only: Set<String> = emptySet()) {
         val src = dir.listFiles { x -> x.name.startsWith("ecus_") && x.name.endsWith(".txt") }
             ?.maxByOrNull { it.lastModified() }
         if (src == null) { scanProgress = "нет файла ecus_*, сначала найди адреса блоков"; return }
@@ -375,7 +375,7 @@ object Elm {
             val req = line.substringBefore("->").trim()
             if (req == "7DF") continue
             val resp = clean(line.substringAfter("->")).take(3)
-            if (req.length == 3 && resp.length == 3 && !pairs.containsKey(resp)) pairs[resp] = req
+            if (req.length == 3 && resp.length == 3 && !pairs.containsKey(resp) && (only.isEmpty() || req in only)) pairs[resp] = req
         }
         val f = File(dir, "survey_${stamp()}.txt"); currentFile = f
         scanning = true

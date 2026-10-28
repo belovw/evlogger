@@ -241,8 +241,10 @@ class MainActivity : Activity() {
         if (a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь диапазон (hex)")
         val st = stepBox.text.toString().trim().toIntOrNull() ?: 1
         if (st < 1 || st > 4096) return toast("Шаг от 1 до 4096")
+        // в поле «Адрес запроса» можно перечислить блоки через пробел (например 7A0 7A4 7B5); 7DF или пусто = все
+        val only = hdrBox.text.toString().uppercase().split(Regex("[\\s,]+")).filter { it.length == 3 && it != "7DF" }.toSet()
         startForegroundService(Intent(this, KeepAliveService::class.java))
-        Thread { Elm.surveyEcus(getExternalFilesDir(null)!!, a, b, st) }.start()
+        Thread { Elm.surveyEcus(getExternalFilesDir(null)!!, a, b, st, only) }.start()
     }
 
     private fun startScan() {
