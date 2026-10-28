@@ -64,6 +64,7 @@ object Elm {
     @Volatile var lastValues: Map<String, String> = emptyMap()
     @Volatile var status: String = "не подключено"
     @Volatile var currentFile: File? = null
+    @Volatile var appVersion: String = "?"
     @Volatile var lastRaw: String = ""
     @Volatile var initLog: String = ""
     var onTerminalLine: ((String) -> Unit)? = null
@@ -150,6 +151,7 @@ object Elm {
         currentFile = f
         logging = true
         f.bufferedWriter().use { w ->
+            w.write("# app version: $appVersion\n")
             initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
             w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
             w.flush()

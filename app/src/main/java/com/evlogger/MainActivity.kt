@@ -43,6 +43,7 @@ class MainActivity : Activity() {
         override fun run() {
             val v = Elm.lastValues
             info.text = buildString {
+                append("Версия приложения: ${Elm.appVersion}\n")
                 append("Статус: ${Elm.status}\n")
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
@@ -56,6 +57,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Elm.appVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 48, 24, 24)

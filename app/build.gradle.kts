@@ -11,8 +11,20 @@ android {
         applicationId = "com.evlogger"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        // Номер сборки берётся из GitHub Actions, чтобы каждая версия отличалась
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionCode = run
+        versionName = "0.$run"
+    }
+
+    // Постоянный ключ подписи: новые сборки ставятся поверх старых без удаления
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     compileOptions {
