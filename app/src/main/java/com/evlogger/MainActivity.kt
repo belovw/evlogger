@@ -32,6 +32,10 @@ class MainActivity : Activity() {
     private lateinit var info: TextView
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
+    private lateinit var hdrBox: EditText
+    private lateinit var fromBox: EditText
+    private lateinit var toBox: EditText
+    private lateinit var didBox: EditText
     private var devices: List<BluetoothDevice> = emptyList()
     private val ui = Handler(Looper.getMainLooper())
 
@@ -47,6 +51,7 @@ class MainActivity : Activity() {
                 append("Статус: ${Elm.status}\n")
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
+                if (Elm.scanning || Elm.scanProgress.isNotEmpty()) append("Сканер: ${Elm.scanProgress}\n")
                 v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
                 if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
                 append("gps_speed = %.1f км/ч".format(gpsSpeed))
@@ -73,6 +78,22 @@ class MainActivity : Activity() {
         btn("CAN-монитор: старт") { startMonitor() }
         btn("CAN-монитор: стоп") { Elm.monitoring = false }
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
+
+        root.addView(TextView(this).apply {
+            text = "\nПоиск данных батареи (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено, двигаться нельзя."
+            textSize = 12f
+        })
+        fun field(hintText: String, def: String) = EditText(this).apply {
+            hint = hintText; setText(def); isSingleLine = true; root.addView(this)
+        }
+        hdrBox = field("Адрес блока (запрос), например 7E4", "7E4")
+        fromBox = field("DID с (hex)", "0000")
+        toBox = field("DID по (hex)", "FFFF")
+        didBox = field("DID для мониторинга через пробел (пусто = найденные сканером)", "")
+        btn("Опознать блоки 7E0-7E7 (названия, номера)") { startIdent() }
+        btn("Сканер Mode 22: старт") { startScan() }
+        btn("Мониторинг DID: старт") { startWatch() }
+        btn("Стоп сканера / мониторинга") { Elm.scanning = false }
 
         info = TextView(this).apply { textSize = 13f }
         root.addView(info)
@@ -149,6 +170,38 @@ class MainActivity : Activity() {
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
         val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
+    }
+
+    private fun busy() = Elm.logging || Elm.monitoring || Elm.scanning
+
+    private fun startIdent() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.identify(getExternalFilesDir(null)!!) }.start()
+    }
+
+    private fun startScan() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        val h = hdrBox.text.toString().trim().uppercase()
+        val a = fromBox.text.toString().trim().toIntOrNull(16)
+        val b = toBox.text.toString().trim().toIntOrNull(16)
+        if (h.toIntOrNull(16) == null || a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь адрес и диапазон (hex)")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.scanDids(getExternalFilesDir(null)!!, h, a, b) }.start()
+    }
+
+    private fun startWatch() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        val h = hdrBox.text.toString().trim().uppercase()
+        if (h.toIntOrNull(16) == null) return toast("Проверь адрес блока")
+        val typed = didBox.text.toString().trim().uppercase().split(Regex("[\\s,;]+")).filter { it.length == 4 && it.toIntOrNull(16) != null }
+        val list = if (typed.isNotEmpty()) typed else Elm.found.toList()
+        if (list.isEmpty()) return toast("Нет DID: сначала скан или впиши вручную")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.watchDids(getExternalFilesDir(null)!!, h, list) }.start()
     }
 
     private fun startMonitor() {
