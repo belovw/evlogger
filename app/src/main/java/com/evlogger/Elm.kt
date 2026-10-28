@@ -289,6 +289,19 @@ object Elm {
         scanning = false; scanProgress = ""
     }
 
+    /** Склеивает многострочный ответ ELM (строки 0:, 1: ...) в одну hex-строку без пробелов. */
+    private fun flatten(r: String): String {
+        val sb = StringBuilder()
+        for (line in r.lines()) {
+            var l = clean(line)
+            if (l.isEmpty()) continue
+            if (l.length == 3 && l.all { it in "0123456789ABCDEF" }) continue // строка с длиной ответа
+            if (l.length >= 2 && l[1] == ':') l = l.substring(2)
+            sb.append(l)
+        }
+        return sb.toString()
+    }
+
     private fun hexAscii(h: String): String {
         val sb = StringBuilder()
         var i = 0
