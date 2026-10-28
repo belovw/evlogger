@@ -91,6 +91,7 @@ class MainActivity : Activity() {
         toBox = field("DID по (hex)", "FFFF")
         didBox = field("DID для мониторинга: 0100 0801-0820 ... (пусто = все найденные последним сканом)", "")
         btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
+        btn("Найти адреса блоков (700-7FF)") { startFindEcus() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
         btn("Стоп сканера / мониторинга") { Elm.scanning = false }
@@ -179,6 +180,13 @@ class MainActivity : Activity() {
         if (busy()) return toast("Останови текущую запись или сканер")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.identify(getExternalFilesDir(null)!!) }.start()
+    }
+
+    private fun startFindEcus() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.findEcus(getExternalFilesDir(null)!!) }.start()
     }
 
     private fun startScan() {

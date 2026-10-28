@@ -263,6 +263,32 @@ object Elm {
         scanning = false
     }
 
+    /** Перебор адресов запроса 700..7FF командой TesterPresent (3E 00, ничего не меняет). Ответ 7E 00 = блок есть. */
+    fun findEcus(dir: File) {
+        val f = File(dir, "ecus_${stamp()}.txt"); currentFile = f
+        scanning = true
+        var hits = 0
+        f.bufferedWriter().use { w ->
+            w.write("# app version: $appVersion\n# поиск блоков: запрос 3E00 на адреса 700..7FF (ответ ...7E00 = блок есть)\n")
+            send("ATCAF1"); send("ATH1"); send("ATAR"); send("ATST19")
+            var id = 0x700
+            while (scanning && connected && id <= 0x7FF) {
+                val h = "%03X".format(id)
+                scanProgress = "адрес $h, найдено блоков: $hits"
+                send("ATSH$h")
+                val r = send("3E00", 600)
+                val c = clean(r)
+                if (c.contains("027E00") || c.contains("7F3E")) {
+                    hits++; w.write("$h -> ${r.replace("\n", " | ")}\n"); w.flush()
+                }
+                id++
+            }
+            w.write("# end: found=$hits last=%03X\n".format(id - 1))
+            restoreAddressing()
+        }
+        scanning = false; scanProgress = ""
+    }
+
     /** Список DID из самого свежего файла scan_*.txt (чтобы не вводить вручную). */
     fun loadFoundFromFile(dir: File): List<String> {
         val f = dir.listFiles { x -> x.name.startsWith("scan_") && x.name.endsWith(".txt") }
