@@ -94,6 +94,7 @@ class MainActivity : Activity() {
         root.addView(header)
         spinner = Spinner(this); root.addView(spinner)
         btn("1. Подключиться к ELM327") { connect() }
+        btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this) { toast(it) } }
         btn("2. Старт записи лога") { startLog() }
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
@@ -205,6 +206,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopAll() {
+        Homework.abort = true
         Elm.logging = false
         Elm.monitoring = false
         Elm.scanning = false
