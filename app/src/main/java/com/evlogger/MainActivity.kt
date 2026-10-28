@@ -95,9 +95,8 @@ class MainActivity : Activity() {
         spinner = Spinner(this); root.addView(spinner)
         btn("1. Подключиться к ELM327") { connect() }
         btn("2. Старт записи лога") { startLog() }
-        btn("Стоп записи") { Elm.logging = false }
+        btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
-        btn("CAN-монитор: стоп") { Elm.monitoring = false }
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
 
         root.addView(TextView(this).apply {
@@ -117,7 +116,6 @@ class MainActivity : Activity() {
         btn("Опознать найденные блоки (названия)") { startIdentEcus() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
-        btn("Стоп сканера / мониторинга") { Elm.scanning = false }
 
         info = TextView(this).apply { textSize = 13f }
         root.addView(info)
@@ -202,6 +200,13 @@ class MainActivity : Activity() {
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
         val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
+    }
+
+    private fun stopAll() {
+        Elm.logging = false
+        Elm.monitoring = false
+        Elm.scanning = false
+        toast("Остановлено")
     }
 
     private fun busy() = Elm.logging || Elm.monitoring || Elm.scanning
