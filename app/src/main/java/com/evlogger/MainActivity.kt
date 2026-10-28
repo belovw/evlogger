@@ -80,17 +80,17 @@ class MainActivity : Activity() {
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
 
         root.addView(TextView(this).apply {
-            text = "\nПоиск данных батареи (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено, двигаться нельзя."
+            text = "\nПоиск данных батареи (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено, двигаться нельзя. Запрос идёт всем блокам, в файле видно, кто ответил."
             textSize = 12f
         })
         fun field(hintText: String, def: String) = EditText(this).apply {
             hint = hintText; setText(def); isSingleLine = true; root.addView(this)
         }
-        hdrBox = field("Адрес блока (запрос), например 7E4", "7E4")
+        hdrBox = field("Адрес запроса: 7DF = всем блокам (рекомендуется)", "7DF")
         fromBox = field("DID с (hex)", "0000")
         toBox = field("DID по (hex)", "FFFF")
         didBox = field("DID для мониторинга через пробел (пусто = найденные сканером)", "")
-        btn("Опознать блоки 7E0-7E7 (названия, номера)") { startIdent() }
+        btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
         btn("Стоп сканера / мониторинга") { Elm.scanning = false }

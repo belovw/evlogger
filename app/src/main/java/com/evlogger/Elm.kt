@@ -89,7 +89,7 @@ object Elm {
     }
 
     fun close() {
-        logging = false; monitoring = false
+        logging = false; monitoring = false; scanning = false
         try { socket?.close() } catch (_: Exception) {}
         socket = null; input = null; output = null
         status = "не подключено"
@@ -192,96 +192,98 @@ object Elm {
 
     private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
     private fun respAddr(req: String) = "%X".format(req.toInt(16) + 8)
+    private fun clean(l: String) = l.replace(" ", "").uppercase()
 
-    /** Склеивает ответ ELM (в т.ч. многострочный 0:/1:) в одну hex-строку без пробелов. */
-    private fun flatten(r: String): String {
-        val sb = StringBuilder()
+    /** Ищет в ответе положительную строку 62<DID>. Возвращает (кто ответил, данные) или null. */
+    private fun positive(r: String, did: String): Pair<String, String>? {
         for (line in r.lines()) {
-            var l = line.replace(" ", "").uppercase()
-            if (l.isEmpty()) continue
-            if (l.length == 3 && l.all { it in "0123456789ABCDEF" } && !l.contains(":")) continue // строка с длиной
-            if (l.length >= 2 && l[1] == ':') l = l.substring(2)
-            sb.append(l)
+            val l = clean(line)
+            val i = l.indexOf("62$did")
+            if (i >= 0) {
+                val hdr = if (i >= 3 && l.take(3).all { it in "0123456789ABCDEF" }) l.take(3) else "?"
+                return Pair(hdr, l.substring(i + 6))
+            }
         }
-        return sb.toString()
+        return null
     }
 
-    /** Опрос стандартных идентификационных DID у блоков 7E0..7E7, чтобы понять, какой блок что. */
+    /** 7DF = запрос всем блокам (ответы с заголовками: видно, кто ответил); иначе личный запрос блоку. */
+    private fun setupAddressing(req: String, timeoutCmd: String = "ATST19") {
+        send("ATCAF1")
+        if (req == "7DF") { send("ATSH7DF"); send("ATH1"); send("ATAR") }
+        else { send("ATSH$req"); send("ATCRA${respAddr(req)}") }
+        send(timeoutCmd)
+    }
+
+    private fun restoreAddressing() { send("ATST32"); send("ATH0"); send("ATSH7DF"); send("ATAR") }
+
+    /** Опрос стандартных идентификационных DID общим запросом: видно, какие блоки отвечают. */
     fun identify(dir: File) {
         val f = File(dir, "ident_${stamp()}.txt"); currentFile = f
         scanning = true
         f.bufferedWriter().use { w ->
-            w.write("# app version: $appVersion\n")
-            send("ATCAF1")
-            for (req in 0x7E0..0x7E7) {
+            w.write("# app version: $appVersion\n# запрос всем блокам (7DF); первое число в ответе = адрес ответившего блока\n")
+            setupAddressing("7DF", "ATST64")
+            for (did in listOf("0100", "F190", "F187", "F18A", "F18C", "F197", "F191", "F189", "F193", "F195")) {
                 if (!scanning || !connected) break
-                val h = "%X".format(req)
-                send("ATSH$h"); send("ATCRA${respAddr(h)}")
-                for (did in listOf("F190", "F187", "F18A", "F18C", "F197", "F191", "F189", "F193", "F195")) {
-                    if (!scanning || !connected) break
-                    scanProgress = "$h 22$did"
-                    val r = send("22$did", 1500)
-                    w.write("$h 22$did -> ${r.replace("\n", " | ")}\n"); w.flush()
-                }
+                scanProgress = "22$did"
+                val r = send("22$did", 2500)
+                w.write("22$did -> ${r.replace("\n", " | ")}\n"); w.flush()
             }
-            send("ATSH7DF"); send("ATAR")
+            restoreAddressing()
         }
         scanning = false; scanProgress = ""
     }
 
-    /** Перебор DID у одного блока. Пишет в файл только найденные (положительные ответы 62 xx xx ...). */
+    /** Перебор DID. Пишет в файл только найденные (положительные ответы 62 xx xx ...). */
     fun scanDids(dir: File, req: String, from: Int, to: Int) {
-        val rsp = respAddr(req)
         val f = File(dir, "scan_${req}_${stamp()}.txt"); currentFile = f
         scanning = true; found.clear()
         var pos = 0; var neg = 0; var none = 0
         f.bufferedWriter().use { w ->
-            w.write("# app version: $appVersion\n# scan request=$req response=$rsp DID %04X..%04X\n".format(from, to))
-            send("ATCAF1"); send("ATSH$req"); send("ATCRA$rsp"); send("ATST19")
+            w.write("# app version: $appVersion\n# scan request=$req DID %04X..%04X\n".format(from, to))
+            setupAddressing(req)
             var did = from
             while (scanning && connected && did <= to) {
                 val d = "%04X".format(did)
                 val r = send("22$d", 800)
-                val c = flatten(r)
                 scanProgress = "$req $d  найдено $pos, отказов $neg, без ответа $none"
-                if (c.contains("62$d")) {
+                if (positive(r, d) != null) {
                     pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
-                } else if (c.contains("7F22")) {
+                } else if (clean(r).contains("7F22")) {
                     neg++
-                    val code = c.substringAfter("7F22", "").take(2)
+                    val code = clean(r).substringAfter("7F22", "").take(2)
                     if (code != "31" && code != "11" && code != "12") { w.write("# NEG $d 7F22$code\n"); w.flush() }
                 } else none++
                 did++
             }
             w.write("# end: found=$pos neg=$neg none=$none last=%04X\n".format(did - 1))
-            send("ATST32"); send("ATSH7DF"); send("ATAR")
+            restoreAddressing()
         }
         scanning = false
     }
 
     /** Циклически читает список DID и пишет сырые значения в CSV (для поиска тока/мощности). */
     fun watchDids(dir: File, req: String, dids: List<String>) {
-        val rsp = respAddr(req)
         val f = File(dir, "watch_${req}_${stamp()}.csv"); currentFile = f
         scanning = true
         f.bufferedWriter().use { w ->
-            w.write("# app version: $appVersion\n# request=$req response=$rsp\n")
+            w.write("# app version: $appVersion\n# request=$req\n")
             w.write("time_ms,iso," + dids.joinToString(",") + "\n"); w.flush()
-            send("ATCAF1"); send("ATSH$req"); send("ATCRA$rsp"); send("ATST19")
+            setupAddressing(req)
             while (scanning && connected) {
                 val vals = ArrayList<String>()
                 for (d in dids) {
                     if (!scanning) break
-                    val c = flatten(send("22$d", 800))
-                    val i = c.indexOf("62$d")
-                    vals.add(if (i >= 0) c.substring(i + 6) else "")
+                    val p = positive(send("22$d", 800), d)
+                    vals.add(p?.second ?: "")
                     scanProgress = "мониторинг $req, DID: ${dids.size}"
                 }
                 val now = System.currentTimeMillis()
                 w.write("$now,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(now))}," + vals.joinToString(",") + "\n")
                 w.flush()
             }
-            send("ATST32"); send("ATSH7DF"); send("ATAR")
+            restoreAddressing()
         }
         scanning = false; scanProgress = ""
     }
