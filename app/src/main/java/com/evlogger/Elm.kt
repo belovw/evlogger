@@ -363,6 +363,56 @@ object Elm {
         scanning = false; scanProgress = ""
     }
 
+    /** Обзор блоков: для каждого адреса из последнего ecus_*.txt перебирает DID (диапазон/шаг как в сканере).
+     *  Пишет survey_*.txt: найденные DID со значениями и итог по блокам. Только чтение (Mode 22). */
+    fun surveyEcus(dir: File, from: Int, to: Int, step: Int) {
+        val src = dir.listFiles { x -> x.name.startsWith("ecus_") && x.name.endsWith(".txt") }
+            ?.maxByOrNull { it.lastModified() }
+        if (src == null) { scanProgress = "нет файла ecus_*, сначала найди адреса блоков"; return }
+        val pairs = LinkedHashMap<String, String>() // ответ -> запрос (без повторов-алиасов)
+        for (line in src.readLines()) {
+            if (line.startsWith("#") || !line.contains("->")) continue
+            val req = line.substringBefore("->").trim()
+            if (req == "7DF") continue
+            val resp = clean(line.substringAfter("->")).take(3)
+            if (req.length == 3 && resp.length == 3 && !pairs.containsKey(resp)) pairs[resp] = req
+        }
+        val f = File(dir, "survey_${stamp()}.txt"); currentFile = f
+        scanning = true
+        val summary = ArrayList<String>()
+        f.bufferedWriter().use { w ->
+            w.write("# app version: $appVersion\n# обзор блоков DID %04X..%04X step=$step\n".format(from, to))
+            send("ATCAF1"); send("ATH0"); send("ATST19")
+            var n = 0
+            for ((resp, req) in pairs) {
+                if (!scanning || !connected) break
+                n++
+                send("ATSH$req"); send("ATCRA$resp")
+                w.write("## $req/$resp\n")
+                var pos = 0; var neg = 0; var none = 0; var first = 0
+                var did = from
+                while (scanning && connected && did <= to) {
+                    val d = "%04X".format(did)
+                    val r = send("22$d", 800)
+                    scanProgress = "блок $n/${pairs.size} $req/$resp $d  найдено $pos"
+                    val c = flatten(r)
+                    val i = c.indexOf("62$d")
+                    if (i >= 0) {
+                        pos++; w.write("$d ${c.substring(i + 6)}\n"); w.flush()
+                    } else if (c.contains("7F22")) neg++ else none++
+                    first++
+                    if (first == 8 && pos == 0 && neg == 0) break // блок молчит - пропускаем
+                    did += step
+                }
+                summary.add("$req/$resp found=$pos neg=$neg none=$none")
+                w.write("# $req/$resp found=$pos neg=$neg none=$none\n"); w.flush()
+            }
+            w.write("# ИТОГ\n"); summary.forEach { w.write("# $it\n") }
+            restoreAddressing()
+        }
+        scanning = false; scanProgress = ""
+    }
+
     /** Список DID из самого свежего файла scan_*.txt (чтобы не вводить вручную). */
     fun loadFoundFromFile(dir: File): List<String> {
         val f = dir.listFiles { x -> x.name.startsWith("scan_") && x.name.endsWith(".txt") }

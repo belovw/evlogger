@@ -114,6 +114,7 @@ class MainActivity : Activity() {
         btn("Опознать блоки (кто отвечает на Mode 22)") { startIdent() }
         btn("Найти адреса блоков (700-7FF)") { startFindEcus() }
         btn("Опознать найденные блоки (названия)") { startIdentEcus() }
+        btn("Обзор всех блоков (диапазон и шаг из полей)") { startSurvey() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
 
@@ -230,6 +231,18 @@ class MainActivity : Activity() {
         if (busy()) return toast("Останови текущую запись или сканер")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.identifyEcus(getExternalFilesDir(null)!!) }.start()
+    }
+
+    private fun startSurvey() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        val a = fromBox.text.toString().trim().toIntOrNull(16)
+        val b = toBox.text.toString().trim().toIntOrNull(16)
+        if (a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь диапазон (hex)")
+        val st = stepBox.text.toString().trim().toIntOrNull() ?: 1
+        if (st < 1 || st > 4096) return toast("Шаг от 1 до 4096")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.surveyEcus(getExternalFilesDir(null)!!, a, b, st) }.start()
     }
 
     private fun startScan() {
