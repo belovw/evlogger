@@ -43,6 +43,12 @@ object Homework {
         return Pair(parse(act.assets.open("homework.txt").bufferedReader().readText()), "встроенное, нет связи с GitHub")
     }
 
+    private fun fetchText(url: String): String {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 8000; c.readTimeout = 8000; c.useCaches = false
+        try { return c.inputStream.bufferedReader().readText() } finally { c.disconnect() }
+    }
+
     private fun build(act: Activity): Int =
         try { act.packageManager.getPackageInfo(act.packageName, 0).versionName?.substringAfter("0.")?.toIntOrNull() ?: 0 } catch (e: Exception) { 0 }
 
@@ -159,7 +165,11 @@ object Homework {
                         val sec = st.args.getOrNull(0)?.toLongOrNull() ?: 60
                         note("log ${st.args}")
                         val custom = File(dir, "pids.txt")
-                        val list = Elm.loadPids(if (custom.exists()) custom.readText() else act.assets.open("pids.txt").bufferedReader().readText())
+                        val pidsName = st.args.getOrNull(2)?.removePrefix("pids=")?.takeIf { it.isNotBlank() && st.args.getOrNull(2)?.startsWith("pids=") == true }
+                        var text: String? = null
+                        if (pidsName != null) text = try { fetchText("https://raw.githubusercontent.com/belovw/evlogger/main/$pidsName?t=${System.currentTimeMillis()}") } catch (e: Exception) { null }
+                        note("pids: ${if (text != null) "remote $pidsName" else "default"}")
+                        val list = Elm.loadPids(text ?: if (custom.exists()) custom.readText() else act.assets.open("pids.txt").bufferedReader().readText())
                         runCues(act, st.args.getOrElse(1) { "" }, sec, ::note) { Elm.logging = false }
                         Elm.logLoop(dir, list, gps)
                     }
