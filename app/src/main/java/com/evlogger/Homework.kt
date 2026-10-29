@@ -128,6 +128,7 @@ object Homework {
         note("homework started, app ${Elm.appVersion}")
         try {
             act.startForegroundService(Intent(act, KeepAliveService::class.java))
+            try {
             for ((i, st) in steps.withIndex()) {
                 if (abort || !Elm.connected) break
                 Elm.scanProgress = "задание: шаг ${i + 1}/${steps.size}"
@@ -182,6 +183,7 @@ object Homework {
                     }
                 }
             }
+            } catch (e: Exception) { note("step error: ${e.message}"); abort = true; Elm.logging = false; Elm.scanning = false }
             note("homework finished${if (abort) " (aborted)" else ""}")
             val zip = File(act.cacheDir, "homework_$ts.zip")
             ZipOutputStream(zip.outputStream()).use { z ->
