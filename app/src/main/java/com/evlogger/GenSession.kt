@@ -28,7 +28,7 @@ object GenSession {
     private const val DROP_PCT = 0.30     // падение уровня топлива между сессиями, % бака (≈0,135 л, ≈2,7 км на ДВС)
     private const val SESSIONS = "gen_sessions.csv"
     private const val CYCLES = "gen_cycles.csv"
-    private const val HDR_S = "cycle,start,end,minutes,kwh_in,kwh_out,kwh_net,soc0,soc1,rpm_avg,ice_min,p_max_kw,p_avg_kw,coolant0,coolant1,fuel0_pct,fuel1_pct,gap_s,log_file,note"
+    private const val HDR_S = "cycle,start,end,minutes,kwh_in,kwh_out,kwh_net,soc0,soc1,rpm_avg,ice_min,p_max_kw,p_avg_kw,coolant0,coolant1,fuel0_pct,fuel1_pct,range0_km,range1_km,gap_s,log_file,note"
     private const val HDR_C = "cycle,closed,sessions,minutes,kwh_net,liters_real,liters_shown,kwh_per_l,k_flow,implied_pack_kwh,status"
 
     private fun fmt(d: Double, n: Int = 3) = if (d.isNaN()) "" else "%.${n}f".format(Locale.US, d)
@@ -49,6 +49,48 @@ object GenSession {
         fun span() = if (t.size < 2) 0L else t.last() - t.first()
         fun mean() = if (v.isEmpty()) Double.NaN else v.average()
         fun spread() = if (v.isEmpty()) 0.0 else v.max() - v.min()
+    }
+
+
+    // ---------- ввод запаса хода по бензину с панели (км), шаг ≈ 50 мл ----------
+    private const val L_PER_KM = 45.0 / 850.0   // бак 45 л = 850 км по WLTC (допущение; уточняется по заправкам)
+    private const val KM_DROP = 2.0             // падение запаса хода между сессиями, при котором цикл считается нарушенным
+    @Volatile var rangeAsk = ""                 // "start" | "end" | "prefill" | ""
+    @Volatile private var rangeAnswer = Double.NaN
+    @Volatile private var rangeDone = false
+
+    private fun askRange(event: String, timeoutMs: Long = 180_000): Double? {
+        rangeAnswer = Double.NaN; rangeDone = false; rangeAsk = event
+        val t = System.currentTimeMillis()
+        beep()
+        while (!rangeDone && !stopFlag && System.currentTimeMillis() - t < timeoutMs) Thread.sleep(200)
+        rangeAsk = ""
+        return if (rangeDone && !rangeAnswer.isNaN()) rangeAnswer else null
+    }
+
+    fun submitRange(km: Double?) { rangeAnswer = km ?: Double.NaN; rangeDone = true }
+
+    private fun lastKm(pr: android.content.SharedPreferences, cyc: Int): Double? {
+        val v = pr.getFloat("gen_last_km", Float.NaN)
+        return if (!v.isNaN() && pr.getInt("gen_last_km_cycle", -1) == cyc) v.toDouble() else null
+    }
+
+    private fun saveKm(pr: android.content.SharedPreferences, cyc: Int, km: Double) {
+        pr.edit().putFloat("gen_last_km", km.toFloat()).putInt("gen_last_km_cycle", cyc).apply()
+    }
+
+    private fun logRange(dir: File, cyc: Int, event: String, km: Double) {
+        val f = File(dir, "gen_range.csv")
+        if (!f.exists()) f.writeText("time,cycle,event,km\n")
+        f.appendText("${iso(System.currentTimeMillis())},$cyc,$event,${fmt(km, 0)}\n")
+    }
+
+    private fun ensureHeader(f: File, hdr: String) {
+        if (f.exists()) {
+            val first = f.bufferedReader().use { it.readLine() }
+            if (first != hdr) f.renameTo(File(f.parentFile, f.nameWithoutExtension + "_old_" + System.currentTimeMillis() / 1000 + ".csv"))
+        }
+        if (!f.exists()) f.writeText(hdr + "\n")
     }
 
     private fun beep() {
@@ -75,6 +117,7 @@ object GenSession {
         var rpmSum = 0.0; var rpmDt = 0.0; var pMax = 0.0; var pSum = 0.0; var pDt = 0.0
         var soc0 = Double.NaN; var soc1 = Double.NaN; var c0 = Double.NaN; var c1 = Double.NaN
         var f0 = Double.NaN; var f1 = Double.NaN
+        var range0 = Double.NaN; var range1 = Double.NaN
         var logName = ""
         val win = FuelWin()
         val pr = prefs(ctx)
@@ -141,13 +184,29 @@ object GenSession {
                                 aborted = true; break
                             } else note += "между сессиями: топливо %+.2f%% (%+.2f л), SOC %s; ".format(df, df * 0.45, if (ds.isNaN()) "?" else "%+.1f%%".format(ds))
                         }
-                        phase = 2; t0 = now; prevMs = 0L; havePrev = false
+                        status = "Введи запас хода по БЕНЗИНУ с панели (км), двигатель пока не запускай"
+                        val kmS = askRange("start")
+                        if (stopFlag) { cancelled = true; break }
+                        if (kmS != null) {
+                            range0 = kmS
+                            val lk = lastKm(pr, cyc)
+                            if (lk != null && readCycle(dir, cyc).isNotEmpty() && lk - kmS >= KM_DROP) {
+                                alertKind = "drop"; alertFuel = f0
+                                alertText = "По панели запас хода по бензину между сессиями упал на %.0f км (≈ %.2f л): было %.0f, стало %.0f.\nДВС расходовал бензин вне сессий, пары «кВт·ч — литры» в этом цикле больше не сходятся.".format(lk - kmS, (lk - kmS) * L_PER_KM, lk, kmS)
+                                aborted = true; break
+                            }
+                            logRange(dir, cyc, "start", kmS)
+                        }
+                        phase = 2; t0 = System.currentTimeMillis(); prevMs = 0L; havePrev = false
                         c0 = cool ?: Double.NaN
                         beep()
                         status = "ГОТОВО: уровень топлива %.2f%%. Можно включать «Максимальную подзарядку»".format(f0)
                     } else if (phase == 3 && ready) {
                         f1 = win.mean()
                         if (win.spread() > SPREAD_OK) note += "уровень топлива после сессии нестабилен (разброс %.1f%%); ".format(win.spread())
+                        status = "Введи запас хода по БЕНЗИНУ с панели (км) после сессии"
+                        val kmE = askRange("end")
+                        if (kmE != null) { range1 = kmE; logRange(dir, cyc, "end", kmE) }
                         break
                     } else if (phase == 1) {
                         status = "Замер уровня топлива: %d из 30 с (разброс %.1f%%), двигатель не запускай".format(win.span() / 1000, win.spread())
@@ -189,14 +248,15 @@ object GenSession {
             } else {
                 val t1 = System.currentTimeMillis()
                 val f = File(dir, SESSIONS)
-                if (!f.exists()) f.writeText(HDR_S + "\n")
+                ensureHeader(f, HDR_S)
                 val minutes = (t1 - t0) / 60000.0
                 f.appendText(listOf(cyc.toString(), iso(t0), iso(t1), fmt(minutes, 2), fmt(eIn), fmt(eOut), fmt(eIn - eOut),
                     fmt(soc0, 1), fmt(soc1, 1), fmt(if (rpmDt > 0) rpmSum / rpmDt else Double.NaN, 0), fmt(iceSec / 60, 2),
                     fmt(pMax, 2), fmt(if (pDt > 0) pSum / pDt else Double.NaN, 2), fmt(c0, 0), fmt(c1, 0),
-                    fmt(f0, 2), fmt(f1, 2), fmt(gap, 0), logName, note.replace(",", ";"))
+                    fmt(f0, 2), fmt(f1, 2), fmt(range0, 0), fmt(range1, 0), fmt(gap, 0), logName, note.replace(",", ";"))
                     .joinToString(",") + "\n")
                 if (!f1.isNaN()) pr.edit().putFloat("gen_last_fuel", f1.toFloat()).apply()
+                if (!range1.isNaN()) saveKm(pr, cyc, range1)
                 if (!soc1.isNaN()) pr.edit().putFloat("gen_last_soc", soc1.toFloat()).apply()
                 status = "Сессия записана: %.1f мин, в батарею %.2f кВт·ч, топливо %s→%s%%. %s".format(minutes, eIn - eOut,
                     if (f0.isNaN()) "—" else "%.2f".format(f0), if (f1.isNaN()) "—" else "%.2f".format(f1), note)
@@ -249,14 +309,27 @@ object GenSession {
                 val f = win.mean()
                 val pf = pr.getFloat("gen_last_fuel", Float.NaN)
                 val df = if (pf.isNaN()) Double.NaN else f - pf
-                if (!df.isNaN() && df < -DROP_PCT) {
+                val cyc = cycle(ctx)
+                status = "Введи запас хода по БЕНЗИНУ с панели (км) перед заправкой"
+                val km = askRange("prefill")
+                val lk = lastKm(pr, cyc)
+                val kmDrop = if (km != null && lk != null) lk - km else Double.NaN
+                if (km != null) logRange(dir, cyc, "prefill", km)
+                val levelDrop = !df.isNaN() && df < -DROP_PCT
+                val rangeDrop = !kmDrop.isNaN() && kmDrop >= KM_DROP
+                if (levelDrop || rangeDrop) {
                     alertKind = "drop"; alertFuel = f
-                    alertText = "Перед заправкой уровень топлива ниже, чем в конце последней сессии, на %.2f%% (≈ %.2f л, ≈ %.0f км на ДВС): было %.2f%%, сейчас %.2f%%.\nПосле последней сессии двигатель расходовал бензин, поэтому литры при этой заправке нельзя сопоставить с энергией этого цикла.".format(-df, -df * 0.45, -df * 0.45 / 0.06, pf.toDouble(), f)
-                    status = "Замер перед заправкой: топливо ушло (%.2f%%)".format(df)
+                    alertText = "Перед заправкой топлива меньше, чем в конце последней сессии: " +
+                        (if (levelDrop) "уровень −%.2f%% (≈ %.2f л); ".format(-df, -df * 0.45) else "") +
+                        (if (rangeDrop) "по панели −%.0f км (≈ %.2f л); ".format(kmDrop, kmDrop * L_PER_KM) else "") +
+                        "\nПосле последней сессии двигатель расходовал бензин, поэтому литры при этой заправке нельзя сопоставить с энергией этого цикла."
+                    status = "Замер перед заправкой: топливо ушло"
                 } else {
                     pr.edit().putFloat("gen_last_fuel", f.toFloat()).apply()
+                    if (km != null) saveKm(pr, cyc, km)
                     beep()
-                    status = "Замер перед заправкой: уровень %.2f%%, изменение %s. МОЖНО ЗАПРАВЛЯТЬСЯ до щелчка, потом «Итоги генерации» → литры".format(f, if (df.isNaN()) "—" else "%+.2f%%".format(df))
+                    status = "Замер перед заправкой: уровень %.2f%%, изменение %s, панель %s. МОЖНО ЗАПРАВЛЯТЬСЯ до щелчка, потом «Итоги генерации» → литры".format(
+                        f, if (df.isNaN()) "—" else "%+.2f%%".format(df), if (km == null) "не введена" else "%.0f км".format(km))
                 }
                 break
             }
@@ -273,7 +346,7 @@ object GenSession {
     private fun readCycle(dir: File, cyc: Int): List<List<String>> {
         val f = File(dir, SESSIONS)
         if (!f.exists()) return emptyList()
-        return f.readLines().drop(1).map { it.split(",") }.filter { it.size >= 20 && it[0] == cyc.toString() }
+        return f.readLines().drop(1).map { it.split(",") }.filter { it.size >= 22 && it[0] == cyc.toString() }
     }
 
     fun totals(ctx: Context, dir: File): String {
@@ -285,7 +358,12 @@ object GenSession {
         sb.append("Цикл №$cyc (от последней заправки до щелчка)\nСессий: ${rows.size}, ${"%.1f".format(min)} мин, в батарею ${"%.2f".format(kwh)} кВт·ч")
         rows.forEachIndexed { i, r ->
             sb.append("\n${i + 1}) ${r[1].takeLast(8)} ${r[3]} мин, ${r[6]} кВт·ч, SOC ${r[7]}→${r[8]}%, топливо ${r[15]}→${r[16]}%, ${r[9]} об/мин")
-            if (r[19].isNotBlank()) sb.append("\n   ⚠ ${r[19]}")
+            val ra = r[17].toDoubleOrNull(); val rb = r[18].toDoubleOrNull()
+            if (ra != null && rb != null && ra > rb) {
+                val lit = (ra - rb) * L_PER_KM
+                sb.append("\n   панель: ${"%.0f".format(ra)}→${"%.0f".format(rb)} км (−${"%.0f".format(ra - rb)} км ≈ ${"%.2f".format(lit)} л) → ${"%.2f".format((r[6].toDoubleOrNull() ?: 0.0) / lit)} кВт·ч/л")
+            }
+            if (r[21].isNotBlank()) sb.append("\n   ⚠ ${r[21]}")
         }
         val fa = rows.firstOrNull()?.get(15)?.toDoubleOrNull(); val fb = rows.lastOrNull()?.get(16)?.toDoubleOrNull()
         if (fa != null && fb != null) sb.append("\nУровень топлива за цикл: %.1f%% → %.1f%% (≈ %.2f л по датчику, бак 45 л)".format(fa, fb, (fa - fb) * 0.45))
@@ -306,7 +384,7 @@ object GenSession {
         val c = kwh / liters
         val k = if (shown != null && shown > 0) liters / shown else Double.NaN
         val f = File(dir, CYCLES)
-        if (!f.exists()) f.writeText(HDR_C + "\n")
+        ensureHeader(f, HDR_C)
         f.appendText(listOf(cyc.toString(), iso(System.currentTimeMillis()), rows.size.toString(), fmt(min, 1), fmt(kwh, 2), fmt(liters, 2),
             if (shown == null) "" else fmt(shown, 2), fmt(c, 3), fmt(k, 3), fmt(pack, 1), "ok").joinToString(",") + "\n")
         prefs(ctx).edit().putInt("gen_cycle", cyc + 1).apply()
@@ -315,6 +393,13 @@ object GenSession {
             append("Цикл №$cyc закрыт.\nВ батарею: ${"%.2f".format(kwh)} кВт·ч за ${"%.0f".format(min)} мин\nЗалито: ${"%.2f".format(liters)} л\n")
             append("Итого на батарею: %.3f кВт·ч/л (КПД от топлива ≈ %.1f %%)\n".format(c, c / 8.9 * 100))
             if (!k.isNaN()) append("Поправка расходомера: %.3f (фактически = показания × %.3f)\n".format(k, k))
+            val kmA = rows.firstOrNull()?.get(17)?.toDoubleOrNull()
+            val pre = prefs(ctx).getFloat("gen_last_km", Float.NaN)
+            val kmB = if (!pre.isNaN() && prefs(ctx).getInt("gen_last_km_cycle", -1) == cyc) pre.toDouble() else rows.lastOrNull()?.get(18)?.toDoubleOrNull()
+            if (kmA != null && kmB != null && kmA > kmB) {
+                val dk = kmA - kmB
+                append("По панели за цикл: %.0f → %.0f км (−%.0f км). Реальный расход на километр панели = %.4f л/км (при 45 л = 850 км было бы %.4f).\n".format(kmA, kmB, dk, liters / dk, L_PER_KM))
+            }
             val fa = rows.firstOrNull()?.get(15)?.toDoubleOrNull(); val fb = rows.lastOrNull()?.get(16)?.toDoubleOrNull()
             if (fa != null && fb != null) append("Датчик уровня за цикл: %.1f%% → %.1f%% (≈ %.2f л)\n".format(fa, fb, (fa - fb) * 0.45))
             if (!pack.isNaN()) append("Ёмкость по SOC ≈ %.1f кВт·ч (для проверки 31,7)\n".format(pack))
@@ -376,7 +461,7 @@ object GenSession {
         val cyc = cycle(ctx)
         val rows = readCycle(dir, cyc)
         val f = File(dir, CYCLES)
-        if (!f.exists()) f.writeText(HDR_C + "\n")
+        ensureHeader(f, HDR_C)
         f.appendText(listOf(cyc.toString(), iso(System.currentTimeMillis()), rows.size.toString(),
             fmt(rows.sumOf { it[3].toDoubleOrNull() ?: 0.0 }, 1), fmt(rows.sumOf { it[6].toDoubleOrNull() ?: 0.0 }, 2), "", "", "", "", "",
             "void: " + reason.replace(",", ";")).joinToString(",") + "\n")
@@ -396,7 +481,7 @@ object GenSession {
         val names = LinkedHashSet<String>()
         listOf(SESSIONS, CYCLES).forEach { if (File(dir, it).exists()) names.add(it) }
         File(dir, SESSIONS).takeIf { it.exists() }?.readLines()?.drop(1)?.forEach { l ->
-            val p = l.split(","); if (p.size >= 19 && p[18].isNotBlank() && File(dir, p[18]).exists()) names.add(p[18])
+            val p = l.split(","); if (p.size >= 21 && p[20].isNotBlank() && File(dir, p[20]).exists()) names.add(p[20])
         }
         if (names.isEmpty()) return null
         val zip = File(ctx.cacheDir, "gen_report_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.zip")

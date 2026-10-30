@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var bannerView: TextView
     private lateinit var genBtn: Button
     private var alertOpen = false
+    private var rangeOpen = false
     private val ui = Handler(Looper.getMainLooper())
 
     @Volatile private var gpsLat = 0.0
@@ -67,6 +68,7 @@ class MainActivity : Activity() {
                 bannerView.visibility = android.view.View.VISIBLE
             }
             if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()
+            if (GenSession.rangeAsk.isNotEmpty() && !rangeOpen) showRangeDialog()
             genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
                 1 -> "⚡ Замер топлива до… (нажми = отмена)"
                 3 -> "⚡ Замер топлива после… (нажми = пропустить)"
@@ -239,6 +241,22 @@ class MainActivity : Activity() {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }, "Отправить отчёт генерации"))
+    }
+
+    private fun showRangeDialog() {
+        val ev = GenSession.rangeAsk
+        rangeOpen = true
+        val et = EditText(this).apply {
+            hint = "км, например 821"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val msg = when (ev) {
+            "start" -> "Перед запуском двигателя. Посмотри на панели запас хода по БЕНЗИНУ (км) и введи число. Двигатель пока не запускай."
+            "end" -> "Сессия закончена, ДВС заглушён. Введи запас хода по БЕНЗИНУ с панели (км)."
+            else -> "Перед заправкой. Введи запас хода по БЕНЗИНУ с панели (км)."
+        }
+        android.app.AlertDialog.Builder(this).setTitle("Запас хода по бензину").setMessage(msg).setView(et).setCancelable(false)
+            .setPositiveButton("OK") { _, _ -> GenSession.submitRange(et.text.toString().replace(',', '.').toDoubleOrNull()); rangeOpen = false }
+            .setNegativeButton("Пропустить") { _, _ -> GenSession.submitRange(null); rangeOpen = false }.show()
     }
 
     private fun showGenAlert() {
