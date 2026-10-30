@@ -67,7 +67,11 @@ class MainActivity : Activity() {
                 bannerView.visibility = android.view.View.VISIBLE
             }
             if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()
-            genBtn.text = if (GenSession.running) "⚡ Сессия генерации: СТОП (идёт)" else "⚡ Сессия генерации: СТАРТ"
+            genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
+                1 -> "⚡ Замер топлива до… (нажми = отмена)"
+                3 -> "⚡ Замер топлива после… (нажми = пропустить)"
+                else -> "⚡ СТОП (идёт генерация)"
+            }
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")

@@ -25,7 +25,7 @@ object GenSession {
     private const val ERR_ENERGY = 0.02   // относительная погрешность измерения энергии (допущение)
     private const val TARGET_FILL = 0.01  // цель: вклад заправок не более 1 %
     private const val C_REF = 3.26
-    private const val DROP_PCT = 1.0      // падение уровня топлива между сессиями, % бака (~0,45 л)
+    private const val DROP_PCT = 0.30     // падение уровня топлива между сессиями, % бака (≈0,135 л, ≈2,7 км на ДВС)
     private const val SESSIONS = "gen_sessions.csv"
     private const val CYCLES = "gen_cycles.csv"
     private const val HDR_S = "cycle,start,end,minutes,kwh_in,kwh_out,kwh_net,soc0,soc1,rpm_avg,ice_min,p_max_kw,p_avg_kw,coolant0,coolant1,fuel0_pct,fuel1_pct,gap_s,log_file,note"
@@ -36,29 +36,50 @@ object GenSession {
     private fun prefs(c: Context) = c.getSharedPreferences("evlogger", Context.MODE_PRIVATE)
     fun cycle(c: Context) = prefs(c).getInt("gen_cycle", 1)
 
+    @Volatile var phase = 0     // 1 = замер топлива до, 2 = генерация, 3 = замер топлива после
+    @Volatile private var skipFlag = false
+    private const val SETTLE_MS = 30_000L
+    private const val MAX_WAIT_MS = 120_000L
+    private const val SPREAD_OK = 0.8       // макс. разброс уровня за окно, % бака (2 шага датчика)
+
+    private class FuelWin {
+        val t = ArrayList<Long>(); val v = ArrayList<Double>()
+        fun add(ms: Long, x: Double) { t.add(ms); v.add(x); while (t.isNotEmpty() && ms - t[0] > SETTLE_MS) { t.removeAt(0); v.removeAt(0) } }
+        fun clear() { t.clear(); v.clear() }
+        fun span() = if (t.size < 2) 0L else t.last() - t.first()
+        fun mean() = if (v.isEmpty()) Double.NaN else v.average()
+        fun spread() = if (v.isEmpty()) 0.0 else v.max() - v.min()
+    }
+
+    private fun beep() {
+        try { android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100).startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 600) } catch (_: Exception) {}
+    }
+
     fun toggle(ctx: Context, dir: File, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
-        if (running) { stopFlag = true; return }
+        if (running) { if (phase == 3) skipFlag = true else stopFlag = true; return }
         if (!Elm.connected) return toast("Сначала подключись к ELM327")
         if (Elm.monitoring || Elm.scanning) return toast("Останови монитор/сканер")
         if (Homework.running) return toast("Идёт домашнее задание")
-        running = true; stopFlag = false
-        toast("Сессия идёт. Машина на P, педаль тормоза, включи «Максимальную подзарядку». По окончании нажми кнопку ещё раз.")
+        running = true; stopFlag = false; skipFlag = false; phase = 1
+        toast("Не запускай двигатель: сначала замер уровня топлива (30 с). Когда услышишь сигнал, включай «Максимальную подзарядку».")
         val cyc = cycle(ctx)
         Thread { run(ctx, dir, gps, cyc) }.start()
     }
 
     private fun run(ctx: Context, dir: File, gps: () -> Triple<Double, Double, Double>, cyc: Int) {
-        val t0 = System.currentTimeMillis()
+        val t0req = System.currentTimeMillis()
+        var t0 = t0req
         var startedLog = false
         var note = ""
         var eIn = 0.0; var eOut = 0.0; var gap = 0.0; var iceSec = 0.0
         var rpmSum = 0.0; var rpmDt = 0.0; var pMax = 0.0; var pSum = 0.0; var pDt = 0.0
         var soc0 = Double.NaN; var soc1 = Double.NaN; var c0 = Double.NaN; var c1 = Double.NaN
+        var f0 = Double.NaN; var f1 = Double.NaN
         var logName = ""
-        val fuelFirst = ArrayList<Double>(); val fuelLast = java.util.ArrayDeque<Double>()
+        val win = FuelWin()
         val pr = prefs(ctx)
-        var checked = false
-        var aborted = false
+        var aborted = false; var cancelled = false
+        var phaseStart = System.currentTimeMillis()
         try {
             ctx.startForegroundService(android.content.Intent(ctx, KeepAliveService::class.java))
             if (!Elm.logging) {
@@ -69,9 +90,17 @@ object GenSession {
                 while (!Elm.logging && w < 50) { Thread.sleep(100); w++ }
             }
             logName = Elm.currentFile?.name ?: ""
+            status = "Замер уровня топлива: жди 30 с, двигатель не запускай"
             var prevMs = 0L; var pPrev = 0.0; var havePrev = false
-            while (!stopFlag && Elm.connected && Elm.logging) {
+            var warnedEngine = false
+            while (Elm.connected && Elm.logging) {
                 Thread.sleep(150)
+                if (phase == 3 && skipFlag) break
+                if (phase == 1 && stopFlag) { cancelled = true; break }
+                if (phase == 2 && stopFlag) {                 // переход к замеру после
+                    phase = 3; phaseStart = System.currentTimeMillis(); win.clear()
+                    status = "Выключи режим генерации и заглуши ДВС. Замер уровня топлива 30 с (кнопка = пропустить)"
+                }
                 val ms = Elm.lastDataMs
                 if (ms == prevMs) continue
                 val v = Elm.lastValues
@@ -81,35 +110,54 @@ object GenSession {
                 val soc = v["soc_f22f"]?.toDoubleOrNull() ?: v["soc_5b_pct"]?.toDoubleOrNull()
                 val cool = v["coolant_c"]?.toDoubleOrNull()
                 val fuel = v["fuel_pct"]?.toDoubleOrNull()
-                if (fuel != null) {
-                    if (fuelFirst.size < 12) fuelFirst.add(fuel)
-                    fuelLast.addLast(fuel); if (fuelLast.size > 12) fuelLast.removeFirst()
-                }
-                if (soc != null) { if (soc0.isNaN()) soc0 = soc; soc1 = soc }
-                if (!checked && fuelFirst.size >= 8 && !soc0.isNaN()) {
-                    checked = true
-                    val f0 = fuelFirst.average()
-                    val pf = pr.getFloat("gen_last_fuel", Float.NaN); val ps = pr.getFloat("gen_last_soc", Float.NaN)
-                    val acc = pr.getString("gen_accept_note", "") ?: ""
-                    if (acc.isNotEmpty()) { note += "$acc; "; pr.edit().remove("gen_accept_note").apply() }
-                    if (!pf.isNaN()) {
-                        val df = f0 - pf
-                        val ds = if (ps.isNaN()) Double.NaN else soc0 - ps
-                        val hasOpen = readCycle(dir, cyc).isNotEmpty()
-                        if (df < -DROP_PCT && hasOpen) {
-                            alertKind = "drop"; alertFuel = f0
-                            alertText = "Между сессиями уровень топлива упал на %.1f%% (≈ %.2f л): было %.1f%%, стало %.1f%%.\nЗначит, ДВС расходовал бензин вне сессий, и пары «кВт·ч — литры» в этом цикле больше не сходятся.\n\nSOC между сессиями: %s.".format(-df, -df * 0.45, pf.toDouble(), f0, if (ds.isNaN()) "—" else "%+.1f%%".format(ds))
-                            aborted = true; stopFlag = true
-                        } else if (df > 3.0 && hasOpen) {
-                            alertKind = "refill"; alertFuel = f0
-                            alertText = "Уровень топлива вырос на %.1f%%: была заправка, а цикл не закрыт.\nСначала нажми «Итоги генерации», впиши литры и закрой цикл. Потом запускай новую сессию.".format(df)
-                            aborted = true; stopFlag = true
-                        } else {
-                            note += "между сессиями: топливо %+.1f%% (%+.2f л), SOC %s; ".format(df, df * 0.45, if (ds.isNaN()) "?" else "%+.1f%%".format(ds))
+                val now = System.currentTimeMillis()
+
+                if (phase == 1 || phase == 3) {
+                    if (rpm > 300) {                              // двигатель работает: уровень не мерим, окно сбрасываем
+                        win.clear()
+                        if (phase == 1 && !warnedEngine) { warnedEngine = true; note += "ДВС был запущен до замера топлива; " }
+                    } else if (fuel != null) win.add(now, fuel)
+                    prevMs = ms
+                    val waited = now - phaseStart
+                    val ready = win.span() >= SETTLE_MS - 1500 && (win.spread() <= SPREAD_OK || waited >= MAX_WAIT_MS)
+                    if (phase == 1 && ready) {
+                        f0 = win.mean()
+                        if (win.spread() > SPREAD_OK) note += "уровень топлива до сессии нестабилен (разброс %.1f%%); ".format(win.spread())
+                        val pf = pr.getFloat("gen_last_fuel", Float.NaN); val ps = pr.getFloat("gen_last_soc", Float.NaN)
+                        val acc = pr.getString("gen_accept_note", "") ?: ""
+                        if (acc.isNotEmpty()) { note += "$acc; "; pr.edit().remove("gen_accept_note").apply() }
+                        if (soc != null) soc0 = soc
+                        if (!pf.isNaN()) {
+                            val df = f0 - pf
+                            val ds = if (ps.isNaN() || soc0.isNaN()) Double.NaN else soc0 - ps
+                            val hasOpen = readCycle(dir, cyc).isNotEmpty()
+                            if (df < -DROP_PCT && hasOpen) {
+                                alertKind = "drop"; alertFuel = f0
+                                alertText = "Между сессиями уровень топлива упал на %.2f%% (≈ %.2f л, ≈ %.0f км на ДВС): было %.2f%%, стало %.2f%%.\nЗначит, ДВС расходовал бензин вне сессий, и пары «кВт·ч — литры» в этом цикле больше не сходятся.\n\nSOC между сессиями: %s.".format(-df, -df * 0.45, -df * 0.45 / 0.06, pf.toDouble(), f0, if (ds.isNaN()) "—" else "%+.1f%%".format(ds))
+                                aborted = true; break
+                            } else if (df > 3.0 && hasOpen) {
+                                alertKind = "refill"; alertFuel = f0
+                                alertText = "Уровень топлива вырос на %.1f%%: была заправка, а цикл не закрыт.\nСначала нажми «Итоги генерации», впиши литры и закрой цикл. Потом запускай новую сессию.".format(df)
+                                aborted = true; break
+                            } else note += "между сессиями: топливо %+.2f%% (%+.2f л), SOC %s; ".format(df, df * 0.45, if (ds.isNaN()) "?" else "%+.1f%%".format(ds))
                         }
+                        phase = 2; t0 = now; prevMs = 0L; havePrev = false
+                        c0 = cool ?: Double.NaN
+                        beep()
+                        status = "ГОТОВО: уровень топлива %.2f%%. Можно включать «Максимальную подзарядку»".format(f0)
+                    } else if (phase == 3 && ready) {
+                        f1 = win.mean()
+                        if (win.spread() > SPREAD_OK) note += "уровень топлива после сессии нестабилен (разброс %.1f%%); ".format(win.spread())
+                        break
+                    } else if (phase == 1) {
+                        status = "Замер уровня топлива: %d из 30 с (разброс %.1f%%), двигатель не запускай".format(win.span() / 1000, win.spread())
                     }
+                    continue
                 }
-                if (cool != null) { if (c0.isNaN()) c0 = cool; c1 = cool }
+
+                // ---- фаза 2: генерация ----
+                if (soc != null) { if (soc0.isNaN()) soc0 = soc; soc1 = soc }
+                if (cool != null) { c1 = cool; if (c0.isNaN()) c0 = cool }
                 if (volt == null || amp == null) { prevMs = ms; havePrev = false; continue }
                 val p = -volt * amp / 1000.0          // кВт, плюс = заряд батареи
                 if (havePrev && prevMs != 0L) {
@@ -128,32 +176,33 @@ object GenSession {
                 status = "ГЕНЕРАЦИЯ %.1f мин: в батарею %.2f кВт·ч, P=%.1f кВт, обороты %.0f, SOC %s".format(
                     min, eIn - eOut, p, rpm, if (soc1.isNaN()) "—" else "%.1f%%".format(soc1))
             }
-            if (!Elm.connected) note += "потеря связи"
+            if (!Elm.connected) note += "потеря связи; "
         } catch (e: Exception) {
-            note += "ошибка: ${e.message}"
+            note += "ошибка: ${e.message}; "
         } finally {
             if (startedLog) { Elm.logging = false; Thread.sleep(600) }
-            if (aborted) {
-                status = "Сессия прервана: проверка топлива не пройдена"
+            phase = 0
+            if (aborted || cancelled) {
+                status = if (aborted) "Сессия прервана: проверка топлива не пройдена" else "Сессия отменена"
                 running = false
                 refreshPrecision(ctx, dir)
-                return
+            } else {
+                val t1 = System.currentTimeMillis()
+                val f = File(dir, SESSIONS)
+                if (!f.exists()) f.writeText(HDR_S + "\n")
+                val minutes = (t1 - t0) / 60000.0
+                f.appendText(listOf(cyc.toString(), iso(t0), iso(t1), fmt(minutes, 2), fmt(eIn), fmt(eOut), fmt(eIn - eOut),
+                    fmt(soc0, 1), fmt(soc1, 1), fmt(if (rpmDt > 0) rpmSum / rpmDt else Double.NaN, 0), fmt(iceSec / 60, 2),
+                    fmt(pMax, 2), fmt(if (pDt > 0) pSum / pDt else Double.NaN, 2), fmt(c0, 0), fmt(c1, 0),
+                    fmt(f0, 2), fmt(f1, 2), fmt(gap, 0), logName, note.replace(",", ";"))
+                    .joinToString(",") + "\n")
+                if (!f1.isNaN()) pr.edit().putFloat("gen_last_fuel", f1.toFloat()).apply()
+                if (!soc1.isNaN()) pr.edit().putFloat("gen_last_soc", soc1.toFloat()).apply()
+                status = "Сессия записана: %.1f мин, в батарею %.2f кВт·ч, топливо %s→%s%%. %s".format(minutes, eIn - eOut,
+                    if (f0.isNaN()) "—" else "%.2f".format(f0), if (f1.isNaN()) "—" else "%.2f".format(f1), note)
+                running = false
+                refreshPrecision(ctx, dir)
             }
-            val t1 = System.currentTimeMillis()
-            val f = File(dir, SESSIONS)
-            if (!f.exists()) f.writeText(HDR_S + "\n")
-            val minutes = (t1 - t0) / 60000.0
-            f.appendText(listOf(cyc.toString(), iso(t0), iso(t1), fmt(minutes, 2), fmt(eIn), fmt(eOut), fmt(eIn - eOut),
-                fmt(soc0, 1), fmt(soc1, 1), fmt(if (rpmDt > 0) rpmSum / rpmDt else Double.NaN, 0), fmt(iceSec / 60, 2),
-                fmt(pMax, 2), fmt(if (pDt > 0) pSum / pDt else Double.NaN, 2), fmt(c0, 0), fmt(c1, 0),
-                fmt(if (fuelFirst.isEmpty()) Double.NaN else fuelFirst.average(), 1), fmt(if (fuelLast.isEmpty()) Double.NaN else fuelLast.average(), 1),
-                fmt(gap, 0), logName, note.replace(",", ";"))
-                .joinToString(",") + "\n")
-            if (fuelLast.isNotEmpty()) pr.edit().putFloat("gen_last_fuel", fuelLast.average().toFloat()).apply()
-            if (!soc1.isNaN()) pr.edit().putFloat("gen_last_soc", soc1.toFloat()).apply()
-            status = "Сессия записана: %.1f мин, в батарею %.2f кВт·ч. %s".format(minutes, eIn - eOut, note)
-            running = false
-            refreshPrecision(ctx, dir)
         }
     }
 
