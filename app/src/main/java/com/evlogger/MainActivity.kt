@@ -227,6 +227,14 @@ class MainActivity : Activity() {
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
     }
 
+    private fun shareGenReport(dir: java.io.File) {
+        val z = GenSession.report(this, dir) ?: return toast("Нет данных генерации")
+        val uri = FileProvider.getUriForFile(this, "com.evlogger.files", z)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "Отправить отчёт генерации"))
+    }
+
     private fun showGenAlert() {
         val kind = GenSession.alertKind; val text = GenSession.alertText; val fuel = GenSession.alertFuel
         GenSession.alertKind = ""; alertOpen = true
@@ -234,7 +242,11 @@ class MainActivity : Activity() {
         val b = android.app.AlertDialog.Builder(this).setCancelable(false)
         if (kind == "drop") {
             b.setTitle("⛔ Топливо ушло между сессиями").setMessage(text + "\n\nПродолжать этот цикл бессмысленно, если расход был по неучтённой причине.")
-                .setPositiveButton("Новый цикл (старый аннулировать)") { _, _ -> GenSession.voidCycle(this, dir, "падение топлива вне сессий"); alertOpen = false; toast("Цикл аннулирован, начат новый. Заправься до щелчка и запускай сессию.") }
+                .setPositiveButton("Закрыть цикл и отправить статистику") { _, _ ->
+                    GenSession.voidCycle(this, dir, "падение топлива вне сессий"); alertOpen = false
+                    shareGenReport(dir)
+                    toast("Цикл закрыт без расчёта кВт·ч/л, начат новый. Заправься до щелчка перед следующей сессией.")
+                }
                 .setNeutralButton("Продолжить этот цикл") { _, _ -> GenSession.acceptFuel(this, fuel); alertOpen = false; toast("Принято. Нажми СТАРТ ещё раз.") }
                 .setNegativeButton("Отмена") { _, _ -> alertOpen = false }
         } else {
@@ -258,13 +270,7 @@ class MainActivity : Activity() {
                 val res = GenSession.closeCycle(this, dir, liters, shown)
                 android.app.AlertDialog.Builder(this).setTitle("Результат").setMessage(res).setPositiveButton("OK", null).show()
             }
-            .setNeutralButton("Отправить файлы") { _, _ ->
-                val z = GenSession.report(this, dir) ?: return@setNeutralButton toast("Нет данных генерации")
-                val uri = FileProvider.getUriForFile(this, "com.evlogger.files", z)
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }, "Отправить отчёт генерации"))
-            }
+            .setNeutralButton("Отправить файлы") { _, _ -> shareGenReport(dir) }
             .setNegativeButton("Отмена", null).show()
     }
 
