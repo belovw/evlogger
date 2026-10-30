@@ -16,11 +16,20 @@ import java.util.zip.ZipOutputStream
 object GenSession {
     @Volatile var running = false
     @Volatile var status = ""
+    @Volatile var precision = ""
+    @Volatile var alertKind = ""      // "drop" | "refill" | ""
+    @Volatile var alertText = ""
+    @Volatile var alertFuel = Double.NaN
     @Volatile private var stopFlag = false
+    private const val SIGMA_FILL = 0.20   // л, повторяемость отстрела колонки (допущение)
+    private const val ERR_ENERGY = 0.02   // относительная погрешность измерения энергии (допущение)
+    private const val TARGET_FILL = 0.01  // цель: вклад заправок не более 1 %
+    private const val C_REF = 3.26
+    private const val DROP_PCT = 1.0      // падение уровня топлива между сессиями, % бака (~0,45 л)
     private const val SESSIONS = "gen_sessions.csv"
     private const val CYCLES = "gen_cycles.csv"
     private const val HDR_S = "cycle,start,end,minutes,kwh_in,kwh_out,kwh_net,soc0,soc1,rpm_avg,ice_min,p_max_kw,p_avg_kw,coolant0,coolant1,fuel0_pct,fuel1_pct,gap_s,log_file,note"
-    private const val HDR_C = "cycle,closed,sessions,minutes,kwh_net,liters_real,liters_shown,kwh_per_l,k_flow,implied_pack_kwh"
+    private const val HDR_C = "cycle,closed,sessions,minutes,kwh_net,liters_real,liters_shown,kwh_per_l,k_flow,implied_pack_kwh,status"
 
     private fun fmt(d: Double, n: Int = 3) = if (d.isNaN()) "" else "%.${n}f".format(Locale.US, d)
     private fun iso(ms: Long) = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date(ms))
@@ -49,6 +58,7 @@ object GenSession {
         val fuelFirst = ArrayList<Double>(); val fuelLast = java.util.ArrayDeque<Double>()
         val pr = prefs(ctx)
         var checked = false
+        var aborted = false
         try {
             ctx.startForegroundService(android.content.Intent(ctx, KeepAliveService::class.java))
             if (!Elm.logging) {
@@ -80,12 +90,23 @@ object GenSession {
                     checked = true
                     val f0 = fuelFirst.average()
                     val pf = pr.getFloat("gen_last_fuel", Float.NaN); val ps = pr.getFloat("gen_last_soc", Float.NaN)
+                    val acc = pr.getString("gen_accept_note", "") ?: ""
+                    if (acc.isNotEmpty()) { note += "$acc; "; pr.edit().remove("gen_accept_note").apply() }
                     if (!pf.isNaN()) {
                         val df = f0 - pf
                         val ds = if (ps.isNaN()) Double.NaN else soc0 - ps
-                        note += "между сессиями: топливо %+.1f%% (%+.2f л), SOC %s%s; ".format(df, df * 0.45,
-                            if (ds.isNaN()) "?" else "%+.1f%%".format(ds),
-                            if (df < -0.8) " — ДВС расходовал топливо между сессиями!" else if (df > 3.0) " (была заправка)" else "")
+                        val hasOpen = readCycle(dir, cyc).isNotEmpty()
+                        if (df < -DROP_PCT && hasOpen) {
+                            alertKind = "drop"; alertFuel = f0
+                            alertText = "Между сессиями уровень топлива упал на %.1f%% (≈ %.2f л): было %.1f%%, стало %.1f%%.\nЗначит, ДВС расходовал бензин вне сессий, и пары «кВт·ч — литры» в этом цикле больше не сходятся.\n\nSOC между сессиями: %s.".format(-df, -df * 0.45, pf.toDouble(), f0, if (ds.isNaN()) "—" else "%+.1f%%".format(ds))
+                            aborted = true; stopFlag = true
+                        } else if (df > 3.0 && hasOpen) {
+                            alertKind = "refill"; alertFuel = f0
+                            alertText = "Уровень топлива вырос на %.1f%%: была заправка, а цикл не закрыт.\nСначала нажми «Итоги генерации», впиши литры и закрой цикл. Потом запускай новую сессию.".format(df)
+                            aborted = true; stopFlag = true
+                        } else {
+                            note += "между сессиями: топливо %+.1f%% (%+.2f л), SOC %s; ".format(df, df * 0.45, if (ds.isNaN()) "?" else "%+.1f%%".format(ds))
+                        }
                     }
                 }
                 if (cool != null) { if (c0.isNaN()) c0 = cool; c1 = cool }
@@ -112,6 +133,12 @@ object GenSession {
             note += "ошибка: ${e.message}"
         } finally {
             if (startedLog) { Elm.logging = false; Thread.sleep(600) }
+            if (aborted) {
+                status = "Сессия прервана: проверка топлива не пройдена"
+                running = false
+                refreshPrecision(ctx, dir)
+                return
+            }
             val t1 = System.currentTimeMillis()
             val f = File(dir, SESSIONS)
             if (!f.exists()) f.writeText(HDR_S + "\n")
@@ -126,6 +153,7 @@ object GenSession {
             if (!soc1.isNaN()) pr.edit().putFloat("gen_last_soc", soc1.toFloat()).apply()
             status = "Сессия записана: %.1f мин, в батарею %.2f кВт·ч. %s".format(minutes, eIn - eOut, note)
             running = false
+            refreshPrecision(ctx, dir)
         }
     }
 
@@ -140,7 +168,8 @@ object GenSession {
         val rows = readCycle(dir, cyc)
         val min = rows.sumOf { it[3].toDoubleOrNull() ?: 0.0 }
         val kwh = rows.sumOf { it[6].toDoubleOrNull() ?: 0.0 }
-        val sb = StringBuilder("Цикл №$cyc (от последней заправки до щелчка)\nСессий: ${rows.size}, ${"%.1f".format(min)} мин, в батарею ${"%.2f".format(kwh)} кВт·ч")
+        val sb = StringBuilder("СЕРИЯ: ${precisionFor(dir)}\n\n")
+        sb.append("Цикл №$cyc (от последней заправки до щелчка)\nСессий: ${rows.size}, ${"%.1f".format(min)} мин, в батарею ${"%.2f".format(kwh)} кВт·ч")
         rows.forEachIndexed { i, r ->
             sb.append("\n${i + 1}) ${r[1].takeLast(8)} ${r[3]} мин, ${r[6]} кВт·ч, SOC ${r[7]}→${r[8]}%, топливо ${r[15]}→${r[16]}%, ${r[9]} об/мин")
             if (r[19].isNotBlank()) sb.append("\n   ⚠ ${r[19]}")
@@ -166,8 +195,9 @@ object GenSession {
         val f = File(dir, CYCLES)
         if (!f.exists()) f.writeText(HDR_C + "\n")
         f.appendText(listOf(cyc.toString(), iso(System.currentTimeMillis()), rows.size.toString(), fmt(min, 1), fmt(kwh, 2), fmt(liters, 2),
-            if (shown == null) "" else fmt(shown, 2), fmt(c, 3), fmt(k, 3), fmt(pack, 1)).joinToString(",") + "\n")
+            if (shown == null) "" else fmt(shown, 2), fmt(c, 3), fmt(k, 3), fmt(pack, 1), "ok").joinToString(",") + "\n")
         prefs(ctx).edit().putInt("gen_cycle", cyc + 1).apply()
+        refreshPrecision(ctx, dir)
         return buildString {
             append("Цикл №$cyc закрыт.\nВ батарею: ${"%.2f".format(kwh)} кВт·ч за ${"%.0f".format(min)} мин\nЗалито: ${"%.2f".format(liters)} л\n")
             append("Итого на батарею: %.3f кВт·ч/л (КПД от топлива ≈ %.1f %%)\n".format(c, c / 8.9 * 100))
@@ -175,8 +205,77 @@ object GenSession {
             val fa = rows.firstOrNull()?.get(15)?.toDoubleOrNull(); val fb = rows.lastOrNull()?.get(16)?.toDoubleOrNull()
             if (fa != null && fb != null) append("Датчик уровня за цикл: %.1f%% → %.1f%% (≈ %.2f л)\n".format(fa, fb, (fa - fb) * 0.45))
             if (!pack.isNaN()) append("Ёмкость по SOC ≈ %.1f кВт·ч (для проверки 31,7)\n".format(pack))
-            append("Новый цикл №${cyc + 1} начат. Нажми «Отправить файлы генерации».")
+            append("\nСерия: ${precision}\n")
+            append("Новый цикл №${cyc + 1} начат. Можно продолжать: следующая заправка добавит точности (общая ошибка заправок не растёт от их числа).")
         }
+    }
+
+
+    // ---------- серия (несколько заправок) и точность ----------
+    private class Series(val n: Int, val liters: Double, val kwh: Double, val shownL: Double, val shownSumL: Double)
+
+    private fun series(dir: File): Series {
+        val f = File(dir, CYCLES)
+        if (!f.exists()) return Series(0, 0.0, 0.0, 0.0, 0.0)
+        var n = 0; var l = 0.0; var e = 0.0; var kl = 0.0; var ks = 0.0
+        f.readLines().drop(1).map { it.split(",") }.forEach { r ->
+            if (r.size < 8) return@forEach
+            if (r.size >= 11 && r[10].isNotBlank() && r[10] != "ok") return@forEach
+            val lr = r[5].toDoubleOrNull() ?: return@forEach
+            val ek = r[4].toDoubleOrNull() ?: return@forEach
+            n++; l += lr; e += ek
+            val sh = r[6].toDoubleOrNull()
+            if (sh != null && sh > 0) { kl += lr; ks += sh }
+        }
+        return Series(n, l, e, kl, ks)
+    }
+
+    fun precisionFor(dir: File): String {
+        val s = series(dir)
+        if (s.n == 0 || s.liters <= 0) return "нет закрытых интервалов. Нужна хотя бы одна заправка с вводом литров."
+        // Заправка до щелчка: литры i-й заправки = расход + (отклонение щелчка i − отклонение щелчка i-1).
+        // Сумма по серии «телескопируется»: ошибка заправок = два отклонения щелчка, независимо от числа заправок.
+        val errFill = Math.sqrt(2.0) * SIGMA_FILL / s.liters
+        val err = Math.hypot(errFill, ERR_ENERGY)
+        val c = s.kwh / s.liters
+        val sb = StringBuilder("%d инт., %.1f л, %.1f кВт·ч → %.3f кВт·ч/л ± %.1f%% (заправки ±%.1f%%, энергия ±%.1f%%)".format(
+            s.n, s.liters, s.kwh, c, err * 100, errFill * 100, ERR_ENERGY * 100))
+        if (s.shownSumL > 0) sb.append("; поправка расходомера %.3f".format(s.shownL / s.shownSumL))
+        val need = Math.sqrt(2.0) * SIGMA_FILL / TARGET_FILL - s.liters
+        if (need <= 0) sb.append("\n✔ ТОЧНОСТИ ДОСТАТОЧНО: можно останавливаться, дальше упрёшься в погрешность измерения тока, а не в заправки.")
+        else sb.append("\nДо вклада заправок ±1 %% нужно ещё ≈ %.0f л (≈ %.0f кВт·ч генерации).".format(need, need * C_REF))
+        return sb.toString()
+    }
+
+    fun refreshPrecision(ctx: Context, dir: File) {
+        val s = series(dir)
+        precision = if (s.n == 0) "Точность серии: пока нет закрытых интервалов" else {
+            val errFill = Math.sqrt(2.0) * SIGMA_FILL / s.liters
+            val err = Math.hypot(errFill, ERR_ENERGY)
+            val need = Math.sqrt(2.0) * SIGMA_FILL / TARGET_FILL - s.liters
+            "Точность серии: ±%.1f%% (%.1f л, %d инт.). %s".format(err * 100, s.liters, s.n,
+                if (need <= 0) "МОЖНО ОСТАНАВЛИВАТЬСЯ" else "Нужно ещё ≈ %.0f л".format(need))
+        }
+    }
+
+    /** Аннулирует текущий цикл (расход топлива вне сессий), начинает новый. */
+    fun voidCycle(ctx: Context, dir: File, reason: String) {
+        val cyc = cycle(ctx)
+        val rows = readCycle(dir, cyc)
+        val f = File(dir, CYCLES)
+        if (!f.exists()) f.writeText(HDR_C + "\n")
+        f.appendText(listOf(cyc.toString(), iso(System.currentTimeMillis()), rows.size.toString(),
+            fmt(rows.sumOf { it[3].toDoubleOrNull() ?: 0.0 }, 1), fmt(rows.sumOf { it[6].toDoubleOrNull() ?: 0.0 }, 2), "", "", "", "", "",
+            "void: " + reason.replace(",", ";")).joinToString(",") + "\n")
+        prefs(ctx).edit().putInt("gen_cycle", cyc + 1).remove("gen_last_fuel").remove("gen_last_soc").apply()
+        refreshPrecision(ctx, dir)
+    }
+
+    /** Продолжить цикл вопреки падению топлива: принять новый уровень за базу и пометить в следующей сессии. */
+    fun acceptFuel(ctx: Context, newFuel: Double) {
+        val old = prefs(ctx).getFloat("gen_last_fuel", Float.NaN)
+        prefs(ctx).edit().putFloat("gen_last_fuel", newFuel.toFloat())
+            .putString("gen_accept_note", "принято вручную: топливо %.1f→%.1f%% вне сессий".format(old.toDouble(), newFuel)).apply()
     }
 
     /** zip: gen_sessions.csv, gen_cycles.csv и логи, на которые ссылаются сессии. Возвращает файл. */

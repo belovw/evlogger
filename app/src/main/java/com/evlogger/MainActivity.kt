@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private var devices: List<BluetoothDevice> = emptyList()
     private lateinit var bannerView: TextView
     private lateinit var genBtn: Button
+    private var alertOpen = false
     private val ui = Handler(Looper.getMainLooper())
 
     @Volatile private var gpsLat = 0.0
@@ -65,10 +66,12 @@ class MainActivity : Activity() {
                 bannerView.text = "▶ $b\nдо конца этапа: %d:%02d".format(left / 60, left % 60)
                 bannerView.visibility = android.view.View.VISIBLE
             }
+            if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()
             genBtn.text = if (GenSession.running) "⚡ Сессия генерации: СТОП (идёт)" else "⚡ Сессия генерации: СТАРТ"
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
+                if (GenSession.precision.isNotEmpty()) append("${GenSession.precision}\n")
                 append("Статус: ${Elm.status}\n")
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
@@ -155,6 +158,7 @@ class MainActivity : Activity() {
         root.addView(term)
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
 
+        GenSession.refreshPrecision(this, getExternalFilesDir(null)!!)
         askPermissions()
         loadDevices()
         startGps()
@@ -221,6 +225,22 @@ class MainActivity : Activity() {
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
         val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
+    }
+
+    private fun showGenAlert() {
+        val kind = GenSession.alertKind; val text = GenSession.alertText; val fuel = GenSession.alertFuel
+        GenSession.alertKind = ""; alertOpen = true
+        val dir = getExternalFilesDir(null)!!
+        val b = android.app.AlertDialog.Builder(this).setCancelable(false)
+        if (kind == "drop") {
+            b.setTitle("⛔ Топливо ушло между сессиями").setMessage(text + "\n\nПродолжать этот цикл бессмысленно, если расход был по неучтённой причине.")
+                .setPositiveButton("Новый цикл (старый аннулировать)") { _, _ -> GenSession.voidCycle(this, dir, "падение топлива вне сессий"); alertOpen = false; toast("Цикл аннулирован, начат новый. Заправься до щелчка и запускай сессию.") }
+                .setNeutralButton("Продолжить этот цикл") { _, _ -> GenSession.acceptFuel(this, fuel); alertOpen = false; toast("Принято. Нажми СТАРТ ещё раз.") }
+                .setNegativeButton("Отмена") { _, _ -> alertOpen = false }
+        } else {
+            b.setTitle("⛽ Была заправка").setMessage(text).setPositiveButton("OK") { _, _ -> alertOpen = false; genSummary() }
+        }
+        b.show()
     }
 
     private fun genSummary() {
