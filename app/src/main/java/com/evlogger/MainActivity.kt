@@ -249,7 +249,9 @@ class MainActivity : Activity() {
         val et = EditText(this).apply {
             hint = "км, например 821"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
-        val msg = when (ev) {
+        val pk = if (ev == "end") null else GenSession.prevKm(this)
+        if (pk != null) { et.setText("%.0f".format(pk)); et.selectAll() }
+        val msg = (if (pk != null) "Прошлое значение подставлено: если не изменилось, просто жми OK.\n\n" else "") + when (ev) {
             "start" -> "Перед запуском двигателя. Посмотри на панели запас хода по БЕНЗИНУ (км) и введи число. Двигатель пока не запускай."
             "end" -> "Сессия закончена, ДВС заглушён. Введи запас хода по БЕНЗИНУ с панели (км)."
             else -> "Перед заправкой. Введи запас хода по БЕНЗИНУ с панели (км)."

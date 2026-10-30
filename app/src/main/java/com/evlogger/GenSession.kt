@@ -79,6 +79,17 @@ object GenSession {
         pr.edit().putFloat("gen_last_km", km.toFloat()).putInt("gen_last_km_cycle", cyc).apply()
     }
 
+    private const val GAP_MAX_KM = 40.0         // больше этого расхода вне сессий цикл лучше закрыть
+
+    fun prevKm(ctx: Context): Double? = lastKm(prefs(ctx), cycle(ctx))
+
+    private fun gapKm(pr: android.content.SharedPreferences, cyc: Int): Double =
+        if (pr.getInt("gen_gap_cycle", -1) == cyc) pr.getFloat("gen_gap_km", 0f).toDouble() else 0.0
+
+    private fun addGap(pr: android.content.SharedPreferences, cyc: Int, km: Double) {
+        pr.edit().putFloat("gen_gap_km", (gapKm(pr, cyc) + km).toFloat()).putInt("gen_gap_cycle", cyc).apply()
+    }
+
     private fun logRange(dir: File, cyc: Int, event: String, km: Double) {
         val f = File(dir, "gen_range.csv")
         if (!f.exists()) f.writeText("time,cycle,event,km\n")
@@ -174,10 +185,7 @@ object GenSession {
                             val df = f0 - pf
                             val ds = if (ps.isNaN() || soc0.isNaN()) Double.NaN else soc0 - ps
                             val hasOpen = readCycle(dir, cyc).isNotEmpty()
-                            if (df < -DROP_PCT && hasOpen) {
-                                alertKind = "drop"; alertFuel = f0
-                                alertText = "Между сессиями уровень топлива упал на %.2f%% (≈ %.2f л, ≈ %.0f км на ДВС): было %.2f%%, стало %.2f%%.\nЗначит, ДВС расходовал бензин вне сессий, и пары «кВт·ч — литры» в этом цикле больше не сходятся.\n\nSOC между сессиями: %s.".format(-df, -df * 0.45, -df * 0.45 / 0.06, pf.toDouble(), f0, if (ds.isNaN()) "—" else "%+.1f%%".format(ds))
-                                aborted = true; break
+                            if (false) {
                             } else if (df > 3.0 && hasOpen) {
                                 alertKind = "refill"; alertFuel = f0
                                 alertText = "Уровень топлива вырос на %.1f%%: была заправка, а цикл не закрыт.\nСначала нажми «Итоги генерации», впиши литры и закрой цикл. Потом запускай новую сессию.".format(df)
@@ -187,15 +195,27 @@ object GenSession {
                         status = "Введи запас хода по БЕНЗИНУ с панели (км), двигатель пока не запускай"
                         val kmS = askRange("start")
                         if (stopFlag) { cancelled = true; break }
+                        val hasOpen2 = readCycle(dir, cyc).isNotEmpty()
+                        val dfL = if (pf.isNaN()) Double.NaN else f0 - pf
                         if (kmS != null) {
                             range0 = kmS
                             val lk = lastKm(pr, cyc)
-                            if (lk != null && readCycle(dir, cyc).isNotEmpty() && lk - kmS >= KM_DROP) {
-                                alertKind = "drop"; alertFuel = f0
-                                alertText = "По панели запас хода по бензину между сессиями упал на %.0f км (≈ %.2f л): было %.0f, стало %.0f.\nДВС расходовал бензин вне сессий, пары «кВт·ч — литры» в этом цикле больше не сходятся.".format(lk - kmS, (lk - kmS) * L_PER_KM, lk, kmS)
-                                aborted = true; break
+                            if (lk != null && hasOpen2 && lk - kmS >= KM_DROP) {
+                                val g = lk - kmS
+                                if (g > GAP_MAX_KM) {
+                                    alertKind = "drop"; alertFuel = f0
+                                    alertText = "По панели вне сессий израсходовано %.0f км (≈ %.1f л): было %.0f, стало %.0f.\nЭто много, погрешность вычета станет заметной. Лучше закрыть цикл.".format(g, g * L_PER_KM, lk, kmS)
+                                    aborted = true; break
+                                }
+                                addGap(pr, cyc, g)
+                                logRange(dir, cyc, "gap", g)
+                                note += "вне сессий −%.0f км (≈ %.2f л) вычтено; ".format(g, g * L_PER_KM)
                             }
                             logRange(dir, cyc, "start", kmS)
+                        } else if (hasOpen2 && !dfL.isNaN() && dfL < -DROP_PCT) {
+                            alertKind = "drop"; alertFuel = f0
+                            alertText = "Между сессиями уровень топлива упал на %.2f%% (≈ %.2f л, ≈ %.0f км на ДВС), а запас хода по панели не введён, учесть расход нечем.".format(-dfL, -dfL * 0.45, -dfL * 0.45 / 0.06)
+                            aborted = true; break
                         }
                         phase = 2; t0 = System.currentTimeMillis(); prevMs = 0L; havePrev = false
                         c0 = cool ?: Double.NaN
@@ -315,21 +335,26 @@ object GenSession {
                 val lk = lastKm(pr, cyc)
                 val kmDrop = if (km != null && lk != null) lk - km else Double.NaN
                 if (km != null) logRange(dir, cyc, "prefill", km)
-                val levelDrop = !df.isNaN() && df < -DROP_PCT
-                val rangeDrop = !kmDrop.isNaN() && kmDrop >= KM_DROP
-                if (levelDrop || rangeDrop) {
+                var gapNote = ""
+                var tooBig = false
+                if (km != null && !kmDrop.isNaN() && kmDrop >= KM_DROP) {
+                    if (kmDrop > GAP_MAX_KM) tooBig = true
+                    else { addGap(pr, cyc, kmDrop); logRange(dir, cyc, "gap", kmDrop); gapNote = ", вне сессий −%.0f км вычтено".format(kmDrop) }
+                }
+                val levelDrop = km == null && !df.isNaN() && df < -DROP_PCT
+                if (levelDrop || tooBig) {
                     alertKind = "drop"; alertFuel = f
                     alertText = "Перед заправкой топлива меньше, чем в конце последней сессии: " +
-                        (if (levelDrop) "уровень −%.2f%% (≈ %.2f л); ".format(-df, -df * 0.45) else "") +
-                        (if (rangeDrop) "по панели −%.0f км (≈ %.2f л); ".format(kmDrop, kmDrop * L_PER_KM) else "") +
-                        "\nПосле последней сессии двигатель расходовал бензин, поэтому литры при этой заправке нельзя сопоставить с энергией этого цикла."
+                        (if (levelDrop) "уровень −%.2f%% (≈ %.2f л), запас хода не введён; ".format(-df, -df * 0.45) else "") +
+                        (if (tooBig) "по панели −%.0f км (≈ %.1f л), это много; ".format(kmDrop, kmDrop * L_PER_KM) else "") +
+                        "\nПосле последней сессии двигатель расходовал бензин, поэтому литры нельзя надёжно сопоставить с энергией этого цикла."
                     status = "Замер перед заправкой: топливо ушло"
                 } else {
                     pr.edit().putFloat("gen_last_fuel", f.toFloat()).apply()
                     if (km != null) saveKm(pr, cyc, km)
                     beep()
                     status = "Замер перед заправкой: уровень %.2f%%, изменение %s, панель %s. МОЖНО ЗАПРАВЛЯТЬСЯ до щелчка, потом «Итоги генерации» → литры".format(
-                        f, if (df.isNaN()) "—" else "%+.2f%%".format(df), if (km == null) "не введена" else "%.0f км".format(km))
+                        f, if (df.isNaN()) "—" else "%+.2f%%".format(df), (if (km == null) "не введена" else "%.0f км".format(km)) + gapNote)
                 }
                 break
             }
@@ -381,16 +406,25 @@ object GenSession {
         // ёмкость по SOC: сумма kWh / сумма прироста SOC
         val dSoc = rows.sumOf { (it[8].toDoubleOrNull() ?: 0.0) - (it[7].toDoubleOrNull() ?: 0.0) }
         val pack = if (dSoc > 1) kwh / (dSoc / 100) else Double.NaN
-        val c = kwh / liters
+        val prc = prefs(ctx)
+        val gap = gapKm(prc, cyc)
+        val kmFirst = rows.firstOrNull()?.get(17)?.toDoubleOrNull()
+        val kmLastPref = prc.getFloat("gen_last_km", Float.NaN)
+        val kmLast = if (!kmLastPref.isNaN() && prc.getInt("gen_last_km_cycle", -1) == cyc) kmLastPref.toDouble() else rows.lastOrNull()?.get(18)?.toDoubleOrNull()
+        val dkAll = if (kmFirst != null && kmLast != null) kmFirst - kmLast else Double.NaN
+        val sessLiters = if (gap > 0 && !dkAll.isNaN() && dkAll > gap) liters * (1 - gap / dkAll) else liters
+        val c = kwh / sessLiters
         val k = if (shown != null && shown > 0) liters / shown else Double.NaN
         val f = File(dir, CYCLES)
         ensureHeader(f, HDR_C)
         f.appendText(listOf(cyc.toString(), iso(System.currentTimeMillis()), rows.size.toString(), fmt(min, 1), fmt(kwh, 2), fmt(liters, 2),
             if (shown == null) "" else fmt(shown, 2), fmt(c, 3), fmt(k, 3), fmt(pack, 1), "ok").joinToString(",") + "\n")
-        prefs(ctx).edit().putInt("gen_cycle", cyc + 1).apply()
+        prefs(ctx).edit().putInt("gen_cycle", cyc + 1).remove("gen_gap_km").apply()
         refreshPrecision(ctx, dir)
         return buildString {
             append("Цикл №$cyc закрыт.\nВ батарею: ${"%.2f".format(kwh)} кВт·ч за ${"%.0f".format(min)} мин\nЗалито: ${"%.2f".format(liters)} л\n")
+            if (sessLiters != liters) append("Вне сессий израсходовано %.0f км по панели (≈ %.2f л), вычтено. Литров на сессии: %.2f\n".format(gap, liters - sessLiters, sessLiters))
+            else if (gap > 0) append("Вне сессий было %.0f км, но вычесть не удалось (нет начального/конечного км).\n".format(gap))
             append("Итого на батарею: %.3f кВт·ч/л (КПД от топлива ≈ %.1f %%)\n".format(c, c / 8.9 * 100))
             if (!k.isNaN()) append("Поправка расходомера: %.3f (фактически = показания × %.3f)\n".format(k, k))
             val kmA = rows.firstOrNull()?.get(17)?.toDoubleOrNull()
