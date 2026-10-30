@@ -41,6 +41,7 @@ class MainActivity : Activity() {
     private lateinit var didBox: EditText
     private var devices: List<BluetoothDevice> = emptyList()
     private lateinit var bannerView: TextView
+    private lateinit var genBtn: Button
     private val ui = Handler(Looper.getMainLooper())
 
     @Volatile private var gpsLat = 0.0
@@ -64,8 +65,10 @@ class MainActivity : Activity() {
                 bannerView.text = "▶ $b\nдо конца этапа: %d:%02d".format(left / 60, left % 60)
                 bannerView.visibility = android.view.View.VISIBLE
             }
+            genBtn.text = if (GenSession.running) "⚡ Сессия генерации: СТОП (идёт)" else "⚡ Сессия генерации: СТАРТ"
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
+                if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
                 append("Статус: ${Elm.status}\n")
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
@@ -108,6 +111,8 @@ class MainActivity : Activity() {
         spinner = Spinner(this); root.addView(spinner)
         btn("1. Подключиться к ELM327") { connect() }
         btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        btn("Итоги генерации / ввод литров") { genSummary() }
         btn("2. Старт записи лога") { startLog() }
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
@@ -216,6 +221,31 @@ class MainActivity : Activity() {
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
         val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
+    }
+
+    private fun genSummary() {
+        val dir = getExternalFilesDir(null)!!
+        val lay = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 0) }
+        lay.addView(TextView(this).apply { text = GenSession.totals(this@MainActivity, dir); textSize = 14f })
+        val l1 = EditText(this).apply { hint = "Залито до щелчка, л (например 8.62)"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        val l2 = EditText(this).apply { hint = "Расходомер (Car Scanner) за цикл, л — необязательно"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        lay.addView(l1); lay.addView(l2)
+        android.app.AlertDialog.Builder(this).setTitle("Итоги генерации").setView(android.widget.ScrollView(this).apply { addView(lay) })
+            .setPositiveButton("Закрыть цикл") { _, _ ->
+                val liters = l1.text.toString().replace(',', '.').toDoubleOrNull()
+                if (liters == null || liters <= 0) return@setPositiveButton toast("Введи литры")
+                val shown = l2.text.toString().replace(',', '.').toDoubleOrNull()
+                val res = GenSession.closeCycle(this, dir, liters, shown)
+                android.app.AlertDialog.Builder(this).setTitle("Результат").setMessage(res).setPositiveButton("OK", null).show()
+            }
+            .setNeutralButton("Отправить файлы") { _, _ ->
+                val z = GenSession.report(this, dir) ?: return@setNeutralButton toast("Нет данных генерации")
+                val uri = FileProvider.getUriForFile(this, "com.evlogger.files", z)
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }, "Отправить отчёт генерации"))
+            }
+            .setNegativeButton("Отмена", null).show()
     }
 
     private fun stopAll() {
