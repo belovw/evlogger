@@ -392,6 +392,48 @@ object GenSession {
         }
         val fa = rows.firstOrNull()?.get(15)?.toDoubleOrNull(); val fb = rows.lastOrNull()?.get(16)?.toDoubleOrNull()
         if (fa != null && fb != null) sb.append("\nУровень топлива за цикл: %.1f%% → %.1f%% (≈ %.2f л по датчику, бак 45 л)".format(fa, fb, (fa - fb) * 0.45))
+        // ---- промежуточные итоги текущего цикла ----
+        val pr0 = prefs(ctx)
+        val gap0 = gapKm(pr0, cyc)
+        var panelKm = 0.0; var panelAll = true
+        rows.forEach { r ->
+            val ra = r[17].toDoubleOrNull(); val rb = r[18].toDoubleOrNull()
+            if (ra != null && rb != null && ra >= rb) panelKm += ra - rb else panelAll = false
+        }
+        val litPanel = if (panelAll && panelKm > 0) panelKm * L_PER_KM else Double.NaN
+        val litSensor = if (fa != null && fb != null && fa > fb) (fa - fb) * 0.45 - gap0 * L_PER_KM else Double.NaN
+        val litCur = if (!litPanel.isNaN()) litPanel else litSensor
+        sb.append("\n\n=== ПРОМЕЖУТОЧНО: текущий цикл ===")
+        sb.append("\nВ батарею: %.2f кВт·ч".format(kwh))
+        if (litCur.isNaN() || litCur <= 0) sb.append("\nБензин на зарядку: нет данных (введи км в начале и в конце сессий)")
+        else {
+            sb.append("\nБензин на зарядку: ≈ %.2f л (%s)".format(litCur, if (!litPanel.isNaN()) "по панели" else "по датчику уровня"))
+            sb.append("\nС 1 л в батарею: %.3f кВт·ч".format(kwh / litCur))
+            sb.append("\nТепловой коэффициент (от 8,9 кВт·ч/л): %.3f".format(kwh / litCur / 8.9))
+        }
+        sb.append("\nВне сессий израсходовано: %.0f км (≈ %.2f л)%s".format(gap0, gap0 * L_PER_KM, if (gap0 <= 0.0) " → цикл чистый" else ""))
+        // ---- итого по закрытым циклам ----
+        val cf = File(dir, CYCLES)
+        var nC = 0; var kwhC = 0.0; var litC = 0.0; var nClean = 0; var kwhClean = 0.0; var litClean = 0.0
+        if (cf.exists()) cf.readLines().drop(1).map { it.split(",") }.forEach { r ->
+            if (r.size < 8) return@forEach
+            if (r.size >= 11 && r[10].isNotBlank() && r[10] != "ok") return@forEach
+            val e = r[4].toDoubleOrNull() ?: return@forEach
+            val c = r[7].toDoubleOrNull() ?: return@forEach
+            val lr = r[5].toDoubleOrNull() ?: return@forEach
+            if (c <= 0) return@forEach
+            val ls = e / c
+            nC++; kwhC += e; litC += ls
+            if (Math.abs(ls - lr) < 0.02) { nClean++; kwhClean += e; litClean += ls }
+        }
+        sb.append("\n\n=== ИТОГО по закрытым циклам ===")
+        if (nC == 0) sb.append("\nПока нет закрытых циклов.")
+        else {
+            sb.append("\nЦиклов: $nC. Бензина на зарядку: %.2f л. В батарею: %.2f кВт·ч".format(litC, kwhC))
+            sb.append("\nС 1 л: %.3f кВт·ч, тепловой коэффициент %.3f".format(kwhC / litC, kwhC / litC / 8.9))
+            if (nClean > 0) sb.append("\nТолько чистые циклы ($nClean): %.2f л, %.2f кВт·ч → %.3f кВт·ч/л, коэф. %.3f".format(litClean, kwhClean, kwhClean / litClean, kwhClean / litClean / 8.9))
+            if (!litCur.isNaN() && litCur > 0) sb.append("\nВместе с текущим (оценка): %.2f л, %.2f кВт·ч → %.3f кВт·ч/л".format(litC + litCur, kwhC + kwh, (kwhC + kwh) / (litC + litCur)))
+        }
         sb.append("\n\nПосле заправки до щелчка впиши ниже литры, цикл закроется и посчитается кВт·ч/л.")
         return sb.toString()
     }
@@ -423,6 +465,7 @@ object GenSession {
         refreshPrecision(ctx, dir)
         return buildString {
             append("Цикл №$cyc закрыт.\nВ батарею: ${"%.2f".format(kwh)} кВт·ч за ${"%.0f".format(min)} мин\nЗалито: ${"%.2f".format(liters)} л\n")
+            if (gap <= 0.0) append("Цикл ЧИСТЫЙ: вне сессий бензин не расходовался.\n")
             if (sessLiters != liters) append("Вне сессий израсходовано %.0f км по панели (≈ %.2f л), вычтено. Литров на сессии: %.2f\n".format(gap, liters - sessLiters, sessLiters))
             else if (gap > 0) append("Вне сессий было %.0f км, но вычесть не удалось (нет начального/конечного км).\n".format(gap))
             append("Итого на батарею: %.3f кВт·ч/л (КПД от топлива ≈ %.1f %%)\n".format(c, c / 8.9 * 100))
