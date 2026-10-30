@@ -70,6 +70,7 @@ class MainActivity : Activity() {
             genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
                 1 -> "⚡ Замер топлива до… (нажми = отмена)"
                 3 -> "⚡ Замер топлива после… (нажми = пропустить)"
+                4 -> "⛽ Замер перед заправкой… (нажми = отмена)"
                 else -> "⚡ СТОП (идёт генерация)"
             }
             info.text = buildString {
@@ -119,6 +120,7 @@ class MainActivity : Activity() {
         btn("1. Подключиться к ELM327") { connect() }
         btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        btn("⛽ Замер перед заправкой (30 с)") { GenSession.prefill(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("Итоги генерации / ввод литров") { genSummary() }
         btn("2. Старт записи лога") { startLog() }
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }

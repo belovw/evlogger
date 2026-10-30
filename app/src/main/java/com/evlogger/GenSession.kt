@@ -206,6 +206,70 @@ object GenSession {
         }
     }
 
+
+    /** Контрольный замер уровня топлива перед заправкой: ловит расход топлива после последней сессии. */
+    fun prefill(ctx: Context, dir: File, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
+        if (running) return toast("Идёт сессия или замер: сначала заверши (кнопка сессии)")
+        if (!Elm.connected) return toast("Сначала подключись к ELM327")
+        if (Elm.monitoring || Elm.scanning || Homework.running) return toast("Останови монитор/сканер/задание")
+        if (readCycle(dir, cycle(ctx)).isEmpty()) return toast("В цикле нет сессий: сверять не с чем")
+        running = true; stopFlag = false; phase = 4
+        toast("Замер уровня топлива перед заправкой: 30 с, двигатель заглушён, не двигай машину.")
+        Thread { runPrefill(ctx, dir, gps) }.start()
+    }
+
+    private fun runPrefill(ctx: Context, dir: File, gps: () -> Triple<Double, Double, Double>) {
+        var startedLog = false
+        val win = FuelWin()
+        val pr = prefs(ctx)
+        val begin = System.currentTimeMillis()
+        try {
+            ctx.startForegroundService(android.content.Intent(ctx, KeepAliveService::class.java))
+            if (!Elm.logging) {
+                val pids = Elm.loadPids(ctx.assets.open("pids_gen.txt").bufferedReader().readText())
+                Thread { Elm.logLoop(dir, pids, gps) }.start()
+                startedLog = true
+                var w = 0
+                while (!Elm.logging && w < 50) { Thread.sleep(100); w++ }
+            }
+            var prevMs = 0L
+            status = "Замер перед заправкой: жди 30 с, ДВС заглушён"
+            while (Elm.connected && Elm.logging && !stopFlag) {
+                Thread.sleep(150)
+                val ms = Elm.lastDataMs
+                if (ms == prevMs) continue
+                prevMs = ms
+                val v = Elm.lastValues
+                val rpm = v["rpm"]?.toDoubleOrNull() ?: 0.0
+                val fuel = v["fuel_pct"]?.toDoubleOrNull()
+                val now = System.currentTimeMillis()
+                if (rpm > 300) win.clear() else if (fuel != null) win.add(now, fuel)
+                val ready = win.span() >= SETTLE_MS - 1500 && (win.spread() <= SPREAD_OK || now - begin >= MAX_WAIT_MS)
+                if (!ready) { status = "Замер перед заправкой: %d из 30 с (разброс %.1f%%), ДВС заглушён".format(win.span() / 1000, win.spread()); continue }
+                val f = win.mean()
+                val pf = pr.getFloat("gen_last_fuel", Float.NaN)
+                val df = if (pf.isNaN()) Double.NaN else f - pf
+                if (!df.isNaN() && df < -DROP_PCT) {
+                    alertKind = "drop"; alertFuel = f
+                    alertText = "Перед заправкой уровень топлива ниже, чем в конце последней сессии, на %.2f%% (≈ %.2f л, ≈ %.0f км на ДВС): было %.2f%%, сейчас %.2f%%.\nПосле последней сессии двигатель расходовал бензин, поэтому литры при этой заправке нельзя сопоставить с энергией этого цикла.".format(-df, -df * 0.45, -df * 0.45 / 0.06, pf.toDouble(), f)
+                    status = "Замер перед заправкой: топливо ушло (%.2f%%)".format(df)
+                } else {
+                    pr.edit().putFloat("gen_last_fuel", f.toFloat()).apply()
+                    beep()
+                    status = "Замер перед заправкой: уровень %.2f%%, изменение %s. МОЖНО ЗАПРАВЛЯТЬСЯ до щелчка, потом «Итоги генерации» → литры".format(f, if (df.isNaN()) "—" else "%+.2f%%".format(df))
+                }
+                break
+            }
+            if (stopFlag) status = "Замер перед заправкой отменён"
+            if (!Elm.connected) status = "Замер перед заправкой: потеря связи"
+        } catch (e: Exception) {
+            status = "Замер перед заправкой: ошибка ${e.message}"
+        } finally {
+            if (startedLog) { Elm.logging = false; Thread.sleep(600) }
+            phase = 0; running = false
+        }
+    }
+
     private fun readCycle(dir: File, cyc: Int): List<List<String>> {
         val f = File(dir, SESSIONS)
         if (!f.exists()) return emptyList()
