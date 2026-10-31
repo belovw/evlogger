@@ -186,18 +186,34 @@ class MainActivity : Activity() {
         loadDevices(); startGps()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!Elm.connected) loadDevices()
+    }
+
     @SuppressLint("MissingPermission")
     private fun loadDevices() {
+        fun placeholder(msg: String) {
+            devices = emptyList()
+            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf(msg))
+        }
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            placeholder("⚠ Нет разрешения «Устройства поблизости» (Bluetooth). Выдай в настройках приложения")
+            askPermissions(); return
+        }
         try {
-            val ad: BluetoothAdapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+            val ad: BluetoothAdapter? = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+            if (ad == null) return placeholder("⚠ Bluetooth недоступен на этом устройстве")
+            if (!ad.isEnabled) return placeholder("⚠ Bluetooth выключен. Включи и вернись в приложение")
             devices = ad.bondedDevices.toList()
+            if (devices.isEmpty()) return placeholder("⚠ Нет спаренных устройств. Спарь ELM327 (V-LINK) в настройках Bluetooth")
             spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
                 devices.map { "${it.name} (${it.address})" })
             val saved = getSharedPreferences("evlogger", Context.MODE_PRIVATE).getString("last_mac", null)
             val idx = devices.indexOfFirst { it.address == saved }
             if (idx >= 0) spinner.setSelection(idx)
         } catch (e: SecurityException) {
-            toast("Нужно разрешение Bluetooth")
+            placeholder("⚠ Нет разрешения Bluetooth")
         }
     }
 
