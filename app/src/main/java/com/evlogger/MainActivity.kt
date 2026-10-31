@@ -101,9 +101,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 48, 24, 24)
         }
+        var target: LinearLayout = root
         fun btn(text: String, onClick: () -> Unit) = Button(this).apply {
             this.text = text; setOnClickListener { onClick() }
-            root.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            target.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        fun title(t: String) = TextView(this).apply {
+            text = t; textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(0xFF607D8B.toInt()); setPadding(4, 28, 0, 4); target.addView(this)
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -121,27 +126,48 @@ class MainActivity : Activity() {
             setPadding(24, 24, 24, 24); visibility = android.view.View.GONE
         }
         root.addView(bannerView)
+
+        // --- Подключение и состояние (всегда наверху) ---
         spinner = Spinner(this); root.addView(spinner)
-        btn("1. Подключиться к ELM327") { connect() }
-        btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        btn("Подключиться к ELM327 (запись и разведка пойдут сами)") { connect() }
+        info = TextView(this).apply { textSize = 13f; setPadding(4, 16, 4, 8) }
+        root.addView(info)
+        btn("■ СТОП (запись, разведка, задания)") { stopAll() }
+
+        // --- Основное ---
+        title("ГЕНЕРАЦИЯ")
         genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("⛽ Замер перед заправкой (30 с)") { GenSession.prefill(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("Итоги генерации / ввод литров") { genSummary() }
-        btn("2. Старт записи лога") { startLog() }
-        btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
-        btn("CAN-монитор: старт") { startMonitor() }
-        btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
+
+        title("ДАННЫЕ")
+        btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         probeBtn = btn("") { Probe.enable(!Probe.on); probeBtn.text = probeLabel() }
         probeBtn.text = probeLabel()
         btn("Отправить базу разведки DID (zip)") { shareProbe() }
-        btn("Обновить приложение (скачать последнюю версию)") { updateApp() }
+        btn("Отправить последний файл (в чат / почту)") { shareFile() }
 
-        root.addView(TextView(this).apply {
-            text = "\nПоиск данных батареи (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено, двигаться нельзя. Запрос идёт всем блокам, в файле видно, кто ответил."
+        title("ПРИЛОЖЕНИЕ")
+        btn("Обновить приложение") { updateApp() }
+
+        // --- Инструменты (свёрнуто) ---
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
+        val toolsBtn = btn("⚙ Инструменты разработчика ▸") { }
+        toolsBtn.setOnClickListener {
+            val open = tools.visibility != android.view.View.VISIBLE
+            tools.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+            toolsBtn.text = if (open) "⚙ Инструменты разработчика ▾" else "⚙ Инструменты разработчика ▸"
+        }
+        root.addView(tools)
+        target = tools
+        btn("Запись лога: старт (обычно не нужна, стартует сама)") { startLog() }
+        btn("CAN-монитор: старт") { startMonitor() }
+        tools.addView(TextView(this).apply {
+            text = "\nПоиск данных (Mode 22, только ЧТЕНИЕ). Только на стоянке, зажигание включено. Запрос идёт всем блокам, в файле видно, кто ответил."
             textSize = 12f
         })
         fun field(hintText: String, def: String) = EditText(this).apply {
-            hint = hintText; setText(def); isSingleLine = true; root.addView(this)
+            hint = hintText; setText(def); isSingleLine = true; tools.addView(this)
         }
         hdrBox = field("Адрес запроса: 7DF = всем блокам (рекомендуется)", "7DF")
         fromBox = field("DID с (hex)", "0000")
@@ -154,11 +180,8 @@ class MainActivity : Activity() {
         btn("Обзор всех блоков (диапазон и шаг из полей)") { startSurvey() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
-
-        info = TextView(this).apply { textSize = 13f }
-        root.addView(info)
         cmdBox = EditText(this).apply { hint = "Команда ELM327, например ATRV или 22F190"; isSingleLine = true }
-        root.addView(cmdBox)
+        tools.addView(cmdBox)
         btn("Отправить команду") { sendCmd() }
         btn("Скопировать текст терминала") {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -169,7 +192,7 @@ class MainActivity : Activity() {
             textSize = 12f
             setTextIsSelectable(true)
         }
-        root.addView(term)
+        tools.addView(term)
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
 
         GenSession.refreshPrecision(this, getExternalFilesDir(null)!!)
