@@ -131,7 +131,7 @@ class MainActivity : Activity() {
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
-        probeBtn = btn("") { Probe.setOn(!Probe.on); probeBtn.text = probeLabel() }
+        probeBtn = btn("") { Probe.enable(!Probe.on); probeBtn.text = probeLabel() }
         probeBtn.text = probeLabel()
         btn("Отправить базу разведки DID (zip)") { shareProbe() }
         btn("Обновить приложение (скачать последнюю версию)") { updateApp() }

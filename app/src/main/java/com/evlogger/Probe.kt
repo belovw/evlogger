@@ -56,7 +56,7 @@ object Probe {
         on = pr().getBoolean("probe_on", true)
     }
 
-    fun setOn(v: Boolean) { on = v; pr().edit().putBoolean("probe_on", v).apply(); if (!v) status = "" }
+    fun enable(v: Boolean) { on = v; pr().edit().putBoolean("probe_on", v).apply(); if (!v) status = "" }
 
     private fun load(dir: File) {
         loaded = true
