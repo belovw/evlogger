@@ -144,8 +144,7 @@ class MainActivity : Activity() {
         btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         probeBtn = btn("") { Probe.enable(!Probe.on); probeBtn.text = probeLabel() }
         probeBtn.text = probeLabel()
-        btn("Отправить базу разведки DID (zip)") { shareProbe() }
-        btn("Отправить последний файл (в чат / почту)") { shareFile() }
+        btn("📤 Отправить всё и очистить (один zip)") { shareAll() }
 
         title("ПРИЛОЖЕНИЕ")
         btn("Обновить приложение") { updateApp() }
@@ -218,6 +217,40 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (!Elm.connected) loadDevices()
+        val pend = pendingDelete
+        if (pend.isNotEmpty() && !alertOpen) {
+            pendingDelete = emptyList()
+            android.app.AlertDialog.Builder(this).setTitle("Отправка прошла?")
+                .setMessage("Удалить с телефона ${pend.size} отправленных файлов (логи, сканы и т.п.)?\nСлужебные файлы (сессии генерации, база разведки) и текущий лог остаются.")
+                .setPositiveButton("Да, удалить") { _, _ -> var n = 0; pend.forEach { if (it.delete()) n++ }; toast("Удалено файлов: $n") }
+                .setNegativeButton("Нет, оставить", null).show()
+        }
+    }
+
+    private var pendingDelete: List<java.io.File> = emptyList()
+
+    /** Служебные файлы: нужны приложению для работы, отправляются копией, но не удаляются. */
+    private fun isKeep(f: java.io.File) = f.name.startsWith("gen_") && f.name.endsWith(".csv") && !f.name.contains("_old_") ||
+        f.name == "probe_found.csv" || f.name == "probe_const.csv" || f.name == "pids.txt"
+
+    private fun shareAll() {
+        val dir = getExternalFilesDir(null)!!
+        dir.listFiles { x -> x.name.startsWith("evlogger_all_") }?.forEach { it.delete() }
+        val cur = Elm.currentFile
+        val all = (dir.listFiles() ?: emptyArray()).filter { it.isFile && !it.name.endsWith(".apk") && !it.name.endsWith(".zip") || (it.isFile && it.name.startsWith("gen_report_")) }
+        if (all.isEmpty()) return toast("Файлов пока нет")
+        val z = java.io.File(dir, "evlogger_all_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.zip")
+        java.util.zip.ZipOutputStream(z.outputStream()).use { zo ->
+            all.forEach { f -> zo.putNextEntry(java.util.zip.ZipEntry(f.name)); f.inputStream().use { it.copyTo(zo) }; zo.closeEntry() }
+            zo.putNextEntry(java.util.zip.ZipEntry("state.txt"))
+            zo.write(("version ${Elm.appVersion}\n${Probe.stateText()}\n${GenSession.precision}\n").toByteArray()); zo.closeEntry()
+        }
+        // удаляем только то, что не служебное и не пишется прямо сейчас
+        pendingDelete = all.filter { !isKeep(it) && !(Elm.logging && it == cur) }
+        val uri = FileProvider.getUriForFile(this, "com.evlogger.files", z)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "Отправить всё (${all.size} файлов)"))
     }
 
     @SuppressLint("MissingPermission")
