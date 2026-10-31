@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private var devices: List<BluetoothDevice> = emptyList()
     private lateinit var bannerView: TextView
     private lateinit var genBtn: Button
+    private lateinit var tripBtn: Button
     private var alertOpen = false
     private var rangeOpen = false
     private val ui = Handler(Looper.getMainLooper())
@@ -70,6 +71,8 @@ class MainActivity : Activity() {
             }
             if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()
             if (GenSession.rangeAsk.isNotEmpty() && !rangeOpen) showRangeDialog()
+            if (TripTest.result.isNotEmpty() && !alertOpen) showTripResult()
+            tripBtn.text = if (TripTest.running) "🏁 ФИНИШ заезда (нажми в конечной точке)" else "🏁 Контрольный заезд: СТАРТ"
             genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
                 1 -> "⚡ Замер топлива до… (нажми = отмена)"
                 3 -> "⚡ Замер топлива после… (нажми = пропустить)"
@@ -79,6 +82,7 @@ class MainActivity : Activity() {
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
+                if (TripTest.status.isNotEmpty()) append("${TripTest.status}\n")
                 if (GenSession.precision.isNotEmpty()) append("${GenSession.precision}\n")
                 if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append("${Probe.status}\n")
                 append("Статус: ${Elm.status}\n")
@@ -141,6 +145,10 @@ class MainActivity : Activity() {
         genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("⛽ Замер перед заправкой (30 с)") { GenSession.prefill(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("Итоги генерации / ввод литров") { genSummary() }
+
+        title("ЗАЕЗД")
+        tripBtn = btn("🏁 Контрольный заезд: СТАРТ") { TripTest.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        btn("Итоги заездов / ввод литров") { tripSummary() }
 
         title("ДАННЫЕ")
         btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
@@ -244,11 +252,29 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showTripResult() {
+        val text = TripTest.result; TripTest.result = ""; alertOpen = true
+        android.app.AlertDialog.Builder(this).setTitle("Заезд записан").setMessage(text)
+            .setPositiveButton("OK") { _, _ -> alertOpen = false }.setCancelable(false).show()
+    }
+
+    private fun tripSummary() {
+        val dir = getExternalFilesDir(null)!!
+        val id = TripTest.lastId(dir)
+        val et = EditText(this).apply { hint = "Залито до щелчка, л"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        val b = android.app.AlertDialog.Builder(this).setTitle("Итоги заездов").setMessage(TripTest.summary(dir))
+        if (id > 0) b.setView(et).setPositiveButton("Рассчитать с литрами") { _, _ ->
+            val l = et.text.toString().replace(',', '.').toDoubleOrNull()
+            if (l == null) toast("Введи литры") else android.app.AlertDialog.Builder(this).setTitle("Заезд №$id").setMessage(TripTest.setLiters(dir, id, l)).setPositiveButton("OK", null).show()
+        }
+        b.setNegativeButton("Закрыть", null).show()
+    }
+
     private var pendingDelete: List<java.io.File> = emptyList()
 
     /** Служебные файлы: нужны приложению для работы, отправляются копией, но не удаляются. */
     private fun isKeep(f: java.io.File) = f.name.startsWith("gen_") && f.name.endsWith(".csv") && !f.name.contains("_old_") ||
-        f.name == "probe_found.csv" || f.name == "probe_const.csv" || f.name == "pids.txt"
+        f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name == "probe_const.csv" || f.name == "pids.txt"
 
     private fun sendAll() {
         val pr = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
@@ -371,9 +397,16 @@ class MainActivity : Activity() {
         val et = EditText(this).apply {
             hint = "км, например 821"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
-        val pk = if (ev == "end") null else GenSession.prevKm(this)
+        val pk = if (ev == "end" || ev.startsWith("trip")) null else GenSession.prevKm(this)
         if (pk != null) { et.setText("%.0f".format(pk)); et.selectAll() }
-        val msg = (if (pk != null) "Прошлое значение подставлено: если не изменилось, просто жми OK.\n\n" else "") + when (ev) {
+        val tripMsg = when (ev) {
+            "trip_gas_start" -> "Старт заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
+            "trip_tot_start" -> "Старт заезда. Введи ОБЩИЙ запас хода с панели (км, бензин + электро)."
+            "trip_gas_end" -> "Финиш заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
+            "trip_tot_end" -> "Финиш заезда. Введи ОБЩИЙ запас хода с панели (км)."
+            else -> null
+        }
+        val msg = tripMsg ?: (if (pk != null) "Прошлое значение подставлено: если не изменилось, просто жми OK.\n\n" else "") + when (ev) {
             "start" -> "Перед запуском двигателя. Посмотри на панели запас хода по БЕНЗИНУ (км) и введи число. Двигатель пока не запускай."
             "end" -> "Сессия закончена, ДВС заглушён. Введи запас хода по БЕНЗИНУ с панели (км)."
             else -> "Перед заправкой. Введи запас хода по БЕНЗИНУ с панели (км)."

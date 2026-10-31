@@ -59,7 +59,7 @@ object GenSession {
     @Volatile private var rangeAnswer = Double.NaN
     @Volatile private var rangeDone = false
 
-    private fun askRange(event: String, timeoutMs: Long = 180_000): Double? {
+    fun askRange(event: String, timeoutMs: Long = 180_000): Double? {
         rangeAnswer = Double.NaN; rangeDone = false; rangeAsk = event
         val t = System.currentTimeMillis()
         beep()
