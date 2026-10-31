@@ -75,7 +75,7 @@ class MainActivity : Activity() {
             if (TripTest.result.isNotEmpty() && !alertOpen) showTripResult()
             if (ChargeSession.result.isNotEmpty() && !alertOpen) {
                 val t = ChargeSession.result; ChargeSession.result = ""; alertOpen = true
-                android.app.AlertDialog.Builder(this).setTitle("Зарядка записана").setMessage(t).setCancelable(false).setPositiveButton("OK") { _, _ -> alertOpen = false }.show()
+                android.app.AlertDialog.Builder(this@MainActivity).setTitle("Зарядка записана").setMessage(t).setCancelable(false).setPositiveButton("OK") { _, _ -> alertOpen = false }.show()
             }
             chargeBtn.text = if (ChargeSession.running) "🔌 КОНЕЦ зарядки (нажми, когда отключил пистолет)" else "🔌 Зарядка от станции: СТАРТ"
             tripBtn.text = if (TripTest.running) "🏁 ФИНИШ заезда (нажми в конечной точке)" else "🏁 Контрольный заезд: СТАРТ"
