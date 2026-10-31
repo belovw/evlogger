@@ -82,13 +82,20 @@ object Probe {
 
     private fun load(dir: File) {
         loaded = true
-        appCtx.assets.open("probe_ecus.txt").bufferedReader().readLines().map { it.trim() }
+        val byReq = HashMap<String, Ecu>()
+        appCtx.assets.open("probe_plan.txt").bufferedReader().readLines().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }.forEach {
                 val p = it.split(" ").filter { x -> x.isNotEmpty() }
-                if (p.size >= 2) ecus.add(Ecu(p[0], p[1]))
+                if (p.size >= 4) {
+                    val e = byReq.getOrPut(p[0]) { Ecu(p[0], p[1]).also { x -> ecus.add(x) } }
+                    tasks.add(Task(e, p[2].toInt(16), p[3].toInt(16)))
+                }
             }
-        val head = ecus.take(PRIORITY_ECUS); val tail = ecus.drop(PRIORITY_ECUS)
-        for (grp in listOf(head, tail)) for ((a, b) in RANGES) for (e in grp) tasks.add(Task(e, a, b))
+        val planV = 2
+        if (pr().getInt("probe_plan_v", 0) != planV) {          // план сменился: счётчики с нуля
+            pr().edit().putInt("probe_plan_v", planV).putInt("probe_task", 0).putInt("probe_did", 0)
+                .putInt("probe_tot", 0).putInt("probe_pos", 0).putInt("probe_neg", 0).putLong("probe_ms", 0L).apply()
+        }
         ti = pr().getInt("probe_task", 0).coerceIn(0, maxOf(0, tasks.size - 1))
         did = pr().getInt("probe_did", tasks.getOrNull(ti)?.from ?: 0)
         totalDids = tasks.sumOf { it.to - it.from + 1 }
@@ -101,6 +108,22 @@ object Probe {
             val c = l.split(",")
             if (c.size >= 4) { val e = ecus.firstOrNull { it.req == c[1] }; if (e != null && foundSet.add(c[1] + c[2]) && (c[1] + c[2]) !in constKeys) found.add(e to c[2]) }
         }
+    }
+
+    private fun loadSeeds(dir: File) {
+        try {
+            val f = File(dir, "probe_found.csv")
+            appCtx.assets.open("probe_seed.txt").bufferedReader().readLines().map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }.forEach { l ->
+                    val p = l.split(" ")
+                    val e = ecus.firstOrNull { it.req == p[0] }
+                    if (e != null && p.size >= 2 && foundSet.add(p[0] + p[1])) {
+                        found.add(e to p[1])
+                        if (!f.exists()) f.writeText("time,ecu,did,data\n")
+                        f.appendText("${stamp()},${p[0]},${p[1]},seed\n")
+                    }
+                }
+        } catch (_: Exception) {}
     }
 
     private fun save() {
@@ -136,7 +159,7 @@ object Probe {
         val gen = GenSession.running
         if (!on || Homework.running || Elm.scanning || Elm.monitoring) return
         if (gen && GenSession.phase != 2) return   // замеры топлива до/после: не мешаем
-        if (!loaded) { try { load(dir) } catch (e: Exception) { on = false; status = "Разведка: ошибка ${e.message}"; return } }
+        if (!loaded) { try { load(dir); loadSeeds(dir) } catch (e: Exception) { on = false; status = "Разведка: ошибка ${e.message}"; return } }
         if (tasks.isEmpty()) return
         val t0 = System.currentTimeMillis()
         if (lastStepMs != 0L && t0 - lastStepMs < 15000) activeMs += t0 - lastStepMs
