@@ -13,7 +13,7 @@ import java.util.Locale
  */
 object TripTest {
     private const val FILE = "trip_tests.csv"
-    private const val HDR = "id,start,end,minutes,km_can,km_gps,kwh_out,soc0,soc1,ice_min,ice_starts,v_avg,rpm_avg,gas0,gas1,tot0,tot1,liters,l100_real"
+    private const val HDR = "id,start,end,minutes,km_can,km_gps,kwh_out,soc0,soc1,ice_min,ice_starts,v_avg,rpm_avg,gas0,gas1,tot0,tot1,liters,l100_real,odo0,odo1"
     private const val L_PER_KM = 45.0 / 850.0
     @Volatile var running = false
     @Volatile var status = ""
@@ -45,6 +45,8 @@ object TripTest {
             val gas0 = GenSession.askRange("trip_gas_start") ?: Double.NaN
             status = "Заезд: введи ОБЩИЙ запас хода с панели (км)"
             val tot0 = GenSession.askRange("trip_tot_start") ?: Double.NaN
+            status = "Заезд: введи показание одометра (км) или пропусти"
+            val odo0 = GenSession.askRange("trip_odo_start") ?: Double.NaN
             val t0 = System.currentTimeMillis()
             var prevMs = 0L; var prevP = Double.NaN
             var kwhOut = 0.0; var kmCan = 0.0; var kmGps = 0.0; var iceSec = 0.0; var rpmSum = 0.0; var starts = 0; var wasIce = false
@@ -83,6 +85,8 @@ object TripTest {
             val gas1 = GenSession.askRange("trip_gas_end") ?: Double.NaN
             status = "Финиш: введи ОБЩИЙ запас хода с панели (км)"
             val tot1 = GenSession.askRange("trip_tot_end") ?: Double.NaN
+            status = "Финиш: введи показание одометра (км) или пропусти"
+            val odo1 = GenSession.askRange("trip_odo_end") ?: Double.NaN
             val f = File(dir, FILE)
             if (f.exists() && f.bufferedReader().use { it.readLine() } != HDR) f.renameTo(File(dir, "trip_tests_old_${System.currentTimeMillis() / 1000}.csv"))
             if (!f.exists()) f.writeText(HDR + "\n")
@@ -90,7 +94,7 @@ object TripTest {
             val minutes = (t1 - t0) / 60000.0
             f.appendText(listOf(id.toString(), iso(t0), iso(t1), fmt(minutes), fmt(kmCan), fmt(kmGps), fmt(kwhOut, 3), fmt(soc0, 1), fmt(soc1, 1),
                 fmt(iceSec / 60), starts.toString(), fmt(if (minutes > 0) kmCan / (minutes / 60) else Double.NaN, 1), fmt(if (iceSec > 0) rpmSum / iceSec else Double.NaN, 0),
-                fmt(gas0, 0), fmt(gas1, 0), fmt(tot0, 0), fmt(tot1, 0), "", "").joinToString(",") + "\n")
+                fmt(gas0, 0), fmt(gas1, 0), fmt(tot0, 0), fmt(tot1, 0), "", "", fmt(odo0, 0), fmt(odo1, 0)).joinToString(",") + "\n")
             result = describe(readRow(dir, id)!!, null)
             status = "Заезд записан (№$id). Заправься до щелчка на той же колонке и введи литры в «Итоги заездов»."
         } catch (e: Exception) {
@@ -99,7 +103,7 @@ object TripTest {
     }
 
     private fun readRow(dir: File, id: Int): List<String>? =
-        File(dir, FILE).takeIf { it.exists() }?.readLines()?.drop(1)?.map { it.split(",") }?.firstOrNull { it.size >= 19 && it[0] == id.toString() }
+        File(dir, FILE).takeIf { it.exists() }?.readLines()?.drop(1)?.map { it.split(",") }?.firstOrNull { it.size >= 21 && it[0] == id.toString() }
 
     fun lastId(dir: File): Int = File(dir, FILE).takeIf { it.exists() }?.readLines()?.drop(1)?.size ?: 0
 
@@ -111,6 +115,8 @@ object TripTest {
         val kwhOut = d(r[6])
         val sb = StringBuilder("Заезд №${r[0]}\n")
         sb.append("Время: %.0f мин, пробег %.1f км (GPS %s), средняя %s км/ч, обороты ДВС %s\n".format(d(r[3]), km, r[5], r[11], r[12]))
+        val o0 = d(r[19]); val o1 = d(r[20])
+        if (!o0.isNaN() && !o1.isNaN()) sb.append("Одометр: %.0f → %.0f = %.0f км (интеграл скорости %.1f км, расхождение %+.1f%%)\n".format(o0, o1, o1 - o0, km, if (o1 > o0) (km - (o1 - o0)) / (o1 - o0) * 100 else 0.0))
         sb.append("ДВС работал %s мин (%d запусков)\n".format(r[9], r[10].toIntOrNull() ?: 0))
         sb.append("Батарея: SOC %s → %s%%, из батареи %+.2f кВт·ч (минус = зарядилась)\n".format(r[7], r[8], kwhOut))
         val g0 = d(r[13]); val g1 = d(r[14]); val t0 = d(r[15]); val t1 = d(r[16])
@@ -139,7 +145,7 @@ object TripTest {
         var out = "Заезд №$id не найден"
         for (i in 1 until lines.size) {
             val c = lines[i].split(",").toMutableList()
-            if (c.size >= 19 && c[0] == id.toString()) {
+            if (c.size >= 21 && c[0] == id.toString()) {
                 val km = d(c[4]).let { if (it.isNaN() || it < 0.1) d(c[5]) else it }
                 val kwhOut = d(c[6])
                 c[17] = fmt(liters)
