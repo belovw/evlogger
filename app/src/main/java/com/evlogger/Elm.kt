@@ -444,13 +444,29 @@ object Elm {
             .distinct()
     }
 
+    /** Контрольные показания после каждого прохода мониторинга: температура, обороты, топливо, ток и SOC батареи. */
+    private fun extraReadings(req: String): String {
+        fun hex(r: String, prefix: String): String? { val c = flatten(r); val i = c.indexOf(prefix); return if (i >= 0) c.substring(i + prefix.length) else null }
+        fun b(h: String?, n: Int) = h?.takeIf { it.length >= n * 2 }?.let { it.substring(0, n * 2).toInt(16) }
+        return try {
+            send("ATSH7E0"); send("ATCRA7E8")
+            val cool = b(hex(send("0105", 600), "4105"), 1)?.let { (it - 40).toString() } ?: ""
+            val rpm = b(hex(send("010C", 600), "410C"), 2)?.let { "%.0f".format(Locale.US, it / 4.0) } ?: ""
+            val fuel = b(hex(send("012F", 600), "412F"), 1)?.let { "%.1f".format(Locale.US, it * 100 / 255.0) } ?: ""
+            send("ATSH7A1"); send("ATCRA7A9")
+            val a = b(hex(send("22F229", 600), "62F229"), 2)?.let { "%.1f".format(Locale.US, (it - 10000) / 10.0) } ?: ""
+            val soc = b(hex(send("22F22F", 600), "62F22F"), 2)?.let { "%.1f".format(Locale.US, it / 10.0) } ?: ""
+            "$cool,$rpm,$fuel,$a,$soc"
+        } catch (e: Exception) { ",,,," }
+    }
+
     /** Циклически читает список DID и пишет сырые значения в CSV (для поиска тока/мощности). */
     fun watchDids(dir: File, req: String, dids: List<String>) {
         val f = File(dir, "watch_${req}_${stamp()}.csv"); currentFile = f
         scanning = true
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n# request=$req\n")
-            w.write("time_ms,iso," + dids.joinToString(",") + "\n"); w.flush()
+            w.write("time_ms,iso," + dids.joinToString(",") + ",x_coolant_c,x_rpm,x_fuel_pct,x_batt_a,x_soc\n"); w.flush()
             setupAddressing(req, "ATST0F")
             while (scanning && connected) {
                 val vals = ArrayList<String>()
@@ -460,8 +476,10 @@ object Elm {
                     vals.add(p?.second ?: "")
                     scanProgress = "мониторинг $req, DID: ${dids.size}"
                 }
+                val ex = extraReadings(req)
+                setupAddressing(req, "ATST0F")
                 val now = System.currentTimeMillis()
-                w.write("$now,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(now))}," + vals.joinToString(",") + "\n")
+                w.write("$now,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(now))}," + vals.joinToString(",") + "," + ex + "\n")
                 w.flush()
             }
             restoreAddressing()
