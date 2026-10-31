@@ -107,23 +107,26 @@ object Probe {
 
     /** Вызывается основным циклом после опроса всех известных PID. Укладывается в ~450 мс. */
     fun step(dir: File, raws: ArrayList<String>) {
-        if (!on || GenSession.running || Homework.running || Elm.scanning || Elm.monitoring) return
+        val gen = GenSession.running
+        if (!on || Homework.running || Elm.scanning || Elm.monitoring) return
+        if (gen && GenSession.phase != 2) return   // замеры топлива до/после: не мешаем
         if (!loaded) { try { load(dir) } catch (e: Exception) { on = false; status = "Разведка: ошибка ${e.message}"; return } }
         if (tasks.isEmpty()) return
         val t0 = System.currentTimeMillis()
         var n = 0
-        while (n < 2 && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
+        val maxN = if (gen) 1 else 2
+        while (n < maxN && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
             n++; slot++
             if (slot % 2 == 0 && found.isNotEmpty()) {            // перечитываем найденный DID
                 ri = (ri + 1) % found.size
                 val (e, d) = found[ri]
-                if (e.req in muted) continue
+                if (e.req in muted || (gen && e.req == "7A1")) continue
                 val v = query(e, d)
                 if (!v.isNullOrEmpty()) raws.add("PR ${e.req}>${e.resp} 22$d: $v")
             } else {                                                // разведка нового DID
                 val tk = tasks[ti]
                 if (did < tk.from || did > tk.to) did = tk.from
-                if (tk.ecu.req in muted) { advance(); continue }
+                if (tk.ecu.req in muted || (gen && tk.ecu.req == "7A1")) { advance(); continue }
                 val d = "%04X".format(did)
                 val key = tk.ecu.req + d
                 val v = query(tk.ecu, d)

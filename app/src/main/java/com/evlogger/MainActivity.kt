@@ -242,6 +242,10 @@ class MainActivity : Activity() {
             try {
                 Elm.connect(d)
                 getSharedPreferences("evlogger", Context.MODE_PRIVATE).edit().putString("last_mac", d.address).apply()
+                if (Elm.connected && !Elm.logging) runOnUiThread {
+                    startForegroundService(Intent(this, KeepAliveService::class.java))
+                    Elm.startAutoLog(this, getExternalFilesDir(null)!!) { Triple(gpsLat, gpsLon, gpsSpeed) }
+                }
             } catch (e: Exception) { Elm.status = "ошибка: ${e.message}" }
             Elm.connecting = false
         }.start()
@@ -249,7 +253,7 @@ class MainActivity : Activity() {
 
     private fun startLog() {
         if (!Elm.connected) return toast("Сначала подключись")
-        if (Elm.logging) return
+        if (Elm.logging) { Elm.autoLog = false; return toast("Запись уже идёт") }
         startForegroundService(Intent(this, KeepAliveService::class.java))
         val pids = Elm.loadPids(assets.open("pids.txt").bufferedReader().readText())
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
@@ -330,7 +334,7 @@ class MainActivity : Activity() {
         toast("Остановлено")
     }
 
-    private fun busy() = Elm.logging || Elm.monitoring || Elm.scanning
+    private fun busy(): Boolean { Elm.releaseAutoLog(); return Elm.logging || Elm.monitoring || Elm.scanning }
 
     private fun startIdent() {
         if (!Elm.connected) return toast("Сначала подключись")
@@ -403,6 +407,7 @@ class MainActivity : Activity() {
 
     private fun startMonitor() {
         if (!Elm.connected) return toast("Сначала подключись")
+        Elm.releaseAutoLog()
         if (Elm.logging) return toast("Останови запись лога")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.monitorLoop(getExternalFilesDir(null)!!) }.start()

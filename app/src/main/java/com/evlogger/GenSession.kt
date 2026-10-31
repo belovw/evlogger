@@ -136,6 +136,7 @@ object GenSession {
         var phaseStart = System.currentTimeMillis()
         try {
             ctx.startForegroundService(android.content.Intent(ctx, KeepAliveService::class.java))
+            Elm.releaseAutoLog()
             if (!Elm.logging) {
                 val pids = Elm.loadPids(ctx.assets.open("pids_gen.txt").bufferedReader().readText())
                 Thread { Elm.logLoop(dir, pids, gps) }.start()
@@ -259,7 +260,7 @@ object GenSession {
         } catch (e: Exception) {
             note += "ошибка: ${e.message}; "
         } finally {
-            if (startedLog) { Elm.logging = false; Thread.sleep(600) }
+            if (startedLog) { Elm.logging = false; Thread.sleep(600); Elm.startAutoLog(ctx, dir, gps) }
             phase = 0
             if (aborted || cancelled) {
                 status = if (aborted) "Сессия прервана: проверка топлива не пройдена" else "Сессия отменена"
@@ -305,6 +306,7 @@ object GenSession {
         val begin = System.currentTimeMillis()
         try {
             ctx.startForegroundService(android.content.Intent(ctx, KeepAliveService::class.java))
+            Elm.releaseAutoLog()
             if (!Elm.logging) {
                 val pids = Elm.loadPids(ctx.assets.open("pids_gen.txt").bufferedReader().readText())
                 Thread { Elm.logLoop(dir, pids, gps) }.start()
@@ -363,7 +365,7 @@ object GenSession {
         } catch (e: Exception) {
             status = "Замер перед заправкой: ошибка ${e.message}"
         } finally {
-            if (startedLog) { Elm.logging = false; Thread.sleep(600) }
+            if (startedLog) { Elm.logging = false; Thread.sleep(600); Elm.startAutoLog(ctx, dir, gps) }
             phase = 0; running = false
         }
     }

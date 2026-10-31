@@ -98,6 +98,7 @@ object Homework {
     fun start(act: Activity, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
         if (running) return toast("Задание уже выполняется")
         if (!Elm.connected) return toast("Сначала подключись")
+        Elm.releaseAutoLog()
         if (Elm.logging || Elm.monitoring || Elm.scanning) return toast("Останови запись/сканер")
         toast("Загружаю задание…")
         Thread {

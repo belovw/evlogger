@@ -60,6 +60,8 @@ object Elm {
     private val lock = Any()
 
     @Volatile var logging = false
+    /** true, если лог запущен автоматически после подключения (его можно прервать ради сессии генерации/задания). */
+    @Volatile var autoLog = false
     /** Какой адрес запроса/ответа сейчас выставлен в адаптере (общий для основного цикла и фоновой разведки). */
     @Volatile var curHeader = ""
     @Volatile var monitoring = false
@@ -146,6 +148,23 @@ object Elm {
         return try {
             "%.2f".format(Locale.US, Formula.eval(pid.formula, bytes))
         } catch (e: Exception) { "" }
+    }
+
+    /** Запуск обычной записи лога в фоне (после подключения и после сессий). */
+    fun startAutoLog(ctx: android.content.Context, dir: File, gps: () -> Triple<Double, Double, Double>) {
+        if (logging || !connected) return
+        try {
+            val custom = File(dir, "pids.txt")
+            val list = loadPids(if (custom.exists()) custom.readText() else ctx.assets.open("pids.txt").bufferedReader().readText())
+            autoLog = true
+            Thread { logLoop(dir, list, gps) }.start()
+        } catch (_: Exception) { autoLog = false }
+    }
+
+    /** Останавливает автоматический лог, чтобы сессия/задание запустили свой с нужными PID. */
+    fun releaseAutoLog() {
+        if (autoLog && logging) { logging = false; Thread.sleep(900) }
+        autoLog = false
     }
 
     /** Основной цикл опроса. Вызывать из фонового потока. */
