@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var bannerView: TextView
     private lateinit var genBtn: Button
     private lateinit var tripBtn: Button
+    private lateinit var chargeBtn: Button
     private var alertOpen = false
     private var rangeOpen = false
     private val ui = Handler(Looper.getMainLooper())
@@ -72,6 +73,11 @@ class MainActivity : Activity() {
             if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()
             if (GenSession.rangeAsk.isNotEmpty() && !rangeOpen) showRangeDialog()
             if (TripTest.result.isNotEmpty() && !alertOpen) showTripResult()
+            if (ChargeSession.result.isNotEmpty() && !alertOpen) {
+                val t = ChargeSession.result; ChargeSession.result = ""; alertOpen = true
+                android.app.AlertDialog.Builder(this).setTitle("Зарядка записана").setMessage(t).setCancelable(false).setPositiveButton("OK") { _, _ -> alertOpen = false }.show()
+            }
+            chargeBtn.text = if (ChargeSession.running) "🔌 КОНЕЦ зарядки (нажми, когда отключил пистолет)" else "🔌 Зарядка от станции: СТАРТ"
             tripBtn.text = if (TripTest.running) "🏁 ФИНИШ заезда (нажми в конечной точке)" else "🏁 Контрольный заезд: СТАРТ"
             genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
                 1 -> "⚡ Замер топлива до… (нажми = отмена)"
@@ -83,6 +89,8 @@ class MainActivity : Activity() {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
                 if (TripTest.status.isNotEmpty()) append("${TripTest.status}\n")
+                if (ChargeSession.status.isNotEmpty()) append("${ChargeSession.status}\n")
+                if (Elm.logging) append("${Ledger.status()}\n")
                 if (GenSession.precision.isNotEmpty()) append("${GenSession.precision}\n")
                 if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append("${Probe.status}\n")
                 append("Статус: ${Elm.status}\n")
@@ -102,6 +110,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Probe.init(this)
+        Ledger.init(this)
         Elm.appVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -145,6 +154,10 @@ class MainActivity : Activity() {
         genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("⛽ Замер перед заправкой (30 с)") { GenSession.prefill(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("Итоги генерации / ввод литров") { genSummary() }
+
+        title("ЗАРЯДКА И ЗАПРАВКА")
+        chargeBtn = btn("🔌 Зарядка от станции: СТАРТ") { ChargeSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
+        btn("⛽ Заправка (ввод литров)") { refuelDialog() }
 
         title("ЗАЕЗД")
         tripBtn = btn("🏁 Контрольный заезд: СТАРТ") { TripTest.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
@@ -252,6 +265,23 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun refuelDialog() {
+        val lay = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 0) }
+        fun f(h: String) = EditText(this).apply { hint = h; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; lay.addView(this) }
+        lay.addView(TextView(this).apply { text = Ledger.status() + "\nЗаправка закрывает интервал: считается расход и баланс батареи."; textSize = 13f })
+        val l = f("Залито, л (обязательно)"); val pr = f("Цена за литр, ₸ (необязательно)")
+        val odo = f("Одометр, км (необязательно)"); val gas = f("Запас хода по бензину после заправки, км (необязательно)")
+        val click = android.widget.CheckBox(this).apply { text = "Заправлено ровно до первого щелчка"; isChecked = true; lay.addView(this) }
+        android.app.AlertDialog.Builder(this).setTitle("Заправка").setView(android.widget.ScrollView(this).apply { addView(lay) })
+            .setPositiveButton("Записать") { _, _ ->
+                fun n(e: EditText) = e.text.toString().replace(',', '.').toDoubleOrNull() ?: Double.NaN
+                val lit = n(l)
+                if (lit.isNaN() || lit <= 0) return@setPositiveButton toast("Введи литры")
+                val res = Ledger.refuel(getExternalFilesDir(null)!!, lit, n(pr).let { if (it.isNaN()) 0.0 else it }, n(odo), n(gas), click.isChecked)
+                android.app.AlertDialog.Builder(this).setTitle("Итоги интервала").setMessage(res).setPositiveButton("OK", null).show()
+            }.setNegativeButton("Отмена", null).show()
+    }
+
     private fun showTripResult() {
         val text = TripTest.result; TripTest.result = ""; alertOpen = true
         android.app.AlertDialog.Builder(this).setTitle("Заезд записан").setMessage(text)
@@ -274,7 +304,7 @@ class MainActivity : Activity() {
 
     /** Служебные файлы: нужны приложению для работы, отправляются копией, но не удаляются. */
     private fun isKeep(f: java.io.File) = f.name.startsWith("gen_") && f.name.endsWith(".csv") && !f.name.contains("_old_") ||
-        f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name == "probe_const.csv" || f.name == "pids.txt"
+        f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name.startsWith("charge_sessions") || f.name.startsWith("refuels") || f.name == "probe_const.csv" || f.name == "pids.txt"
 
     private fun sendAll() {
         val pr = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
@@ -397,13 +427,15 @@ class MainActivity : Activity() {
         val et = EditText(this).apply {
             hint = "км, например 821"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
-        val pk = if (ev == "end" || ev.startsWith("trip")) null else GenSession.prevKm(this)
+        val pk = if (ev == "end" || ev.startsWith("trip") || ev.startsWith("chg")) null else GenSession.prevKm(this)
         if (pk != null) { et.setText("%.0f".format(pk)); et.selectAll() }
         val tripMsg = when (ev) {
             "trip_gas_start" -> "Старт заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
             "trip_tot_start" -> "Старт заезда. Введи ОБЩИЙ запас хода с панели (км, бензин + электро)."
             "trip_gas_end" -> "Финиш заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
             "trip_tot_end" -> "Финиш заезда. Введи ОБЩИЙ запас хода с панели (км)."
+            "chg_kwh_end" -> "Зарядка закончена. Сколько кВт·ч показала станция на экране? Можно пропустить."
+            "chg_price_end" -> "Цена за кВт·ч на станции, ₸. Можно пропустить."
             "trip_odo_start" -> "Старт заезда. Показание ОДОМЕТРА (км) для контроля пробега. Можно пропустить."
             "trip_odo_end" -> "Финиш заезда. Показание ОДОМЕТРА (км). Можно пропустить."
             else -> null
@@ -453,7 +485,13 @@ class MainActivity : Activity() {
                 val res = GenSession.closeCycle(this, dir, liters, shown)
                 android.app.AlertDialog.Builder(this).setTitle("Результат").setMessage(res).setPositiveButton("OK", null).show()
             }
-            .setNeutralButton("Отправить файлы") { _, _ -> shareGenReport(dir) }
+            .setNeutralButton("Недействителен (залито не до щелчка)") { _, _ ->
+                val liters = l1.text.toString().replace(',', '.').toDoubleOrNull()
+                GenSession.voidCycle(this, dir, "заправка не до щелчка" + (if (liters != null) " (залито $liters л)" else ""))
+                android.app.AlertDialog.Builder(this).setTitle("Цикл закрыт без расчёта")
+                    .setMessage("Сессии сохранены в данных с пометкой. Следующая заправка до щелчка станет новой точкой отсчёта; литры именно этой заправки в серию не идут.")
+                    .setPositiveButton("OK", null).show()
+            }
             .setNegativeButton("Отмена", null).show()
     }
 

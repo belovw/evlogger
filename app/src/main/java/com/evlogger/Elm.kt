@@ -212,6 +212,7 @@ object Elm {
                 w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
                 w.flush()
                 lastValues = vals
+                try { Ledger.tick(vals, now) } catch (_: Exception) {}
                 if (vals.values.any { it.isNotEmpty() }) lastDataMs = now
             }
         }
