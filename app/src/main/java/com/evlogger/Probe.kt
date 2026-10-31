@@ -36,6 +36,25 @@ object Probe {
     private val muted = HashSet<String>()         // отключённые за ошибки блоки
     private var loaded = false
     private var lastSave = 0L
+    private var activeMs = 0L          // накопленное время записи с включённой разведкой
+    private var lastStepMs = 0L
+    private var totalDids = 0
+
+    private fun hm(ms: Long): String { val m = ms / 60000; return if (m >= 60) "${m / 60} ч ${m % 60} мин" else "$m мин" }
+
+    private fun doneDids(): Int {
+        var d = 0
+        for (i in 0 until ti) d += tasks[i].to - tasks[i].from + 1
+        return d + (did - tasks[ti].from).coerceAtLeast(0)
+    }
+
+    private fun progressLine(): String {
+        val done = doneDids()
+        val pct = if (totalDids > 0) 100.0 * done / totalDids else 0.0
+        val rate = if (activeMs > 60000 && tot > 20) tot * 60000.0 / activeMs else Double.NaN   // DID в минуту
+        val eta = if (rate.isNaN() || rate <= 0) "оценка появится через пару минут" else "осталось ≈ " + hm(((totalDids - done) / rate * 60000).toLong())
+        return "%.1f%% (%d из %d), найдено %d, затрачено %s, %s".format(pct, done, totalDids, found.size, hm(activeMs), eta)
+    }
 
     private fun pr() = appCtx.getSharedPreferences("evlogger", Context.MODE_PRIVATE)
     private fun clean(l: String) = l.replace(" ", "").uppercase()
@@ -69,6 +88,8 @@ object Probe {
         for (grp in listOf(head, tail)) for ((a, b) in RANGES) for (e in grp) tasks.add(Task(e, a, b))
         ti = pr().getInt("probe_task", 0).coerceIn(0, maxOf(0, tasks.size - 1))
         did = pr().getInt("probe_did", tasks.getOrNull(ti)?.from ?: 0)
+        totalDids = tasks.sumOf { it.to - it.from + 1 }
+        activeMs = pr().getLong("probe_ms", 0L)
         tot = pr().getInt("probe_tot", 0); pos = pr().getInt("probe_pos", 0); neg = pr().getInt("probe_neg", 0)
         val f = File(dir, "probe_found.csv")
         if (f.exists()) f.readLines().drop(1).forEach { l ->
@@ -78,7 +99,7 @@ object Probe {
     }
 
     private fun save() {
-        pr().edit().putInt("probe_task", ti).putInt("probe_did", did).putInt("probe_tot", tot).putInt("probe_pos", pos).putInt("probe_neg", neg).apply()
+        pr().edit().putInt("probe_task", ti).putInt("probe_did", did).putInt("probe_tot", tot).putInt("probe_pos", pos).putInt("probe_neg", neg).putLong("probe_ms", activeMs).apply()
     }
 
     private fun addr(e: Ecu) {
@@ -113,6 +134,8 @@ object Probe {
         if (!loaded) { try { load(dir) } catch (e: Exception) { on = false; status = "Разведка: ошибка ${e.message}"; return } }
         if (tasks.isEmpty()) return
         val t0 = System.currentTimeMillis()
+        if (lastStepMs != 0L && t0 - lastStepMs < 15000) activeMs += t0 - lastStepMs
+        lastStepMs = t0
         var n = 0
         val maxN = if (gen) 1 else 2
         while (n < maxN && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
@@ -148,7 +171,7 @@ object Probe {
             }
         }
         val tk = tasks[ti]
-        status = "Разведка DID: блок ${tk.ecu.req} %04X, этап ${ti + 1}/${tasks.size}, проверено $tot, найдено ${found.size}${if (muted.isNotEmpty()) ", отключены ${muted.joinToString("/")}" else ""}".format(did)
+        status = "Разведка DID: ${progressLine()}\nсейчас: блок ${tk.ecu.req} %04X${if (muted.isNotEmpty()) ", отключены ${muted.joinToString("/")}" else ""}".format(did)
         if (System.currentTimeMillis() - lastSave > 20000) { lastSave = System.currentTimeMillis(); save() }
     }
 
@@ -158,7 +181,7 @@ object Probe {
         if (did > tk.to) { ti = (ti + 1) % tasks.size; did = tasks[ti].from }
     }
 
-    fun stateText(): String = "Прогресс: этап ${ti + 1}/${tasks.size}, проверено $tot DID, найдено ${found.size} (положительных ответов $pos, отказов $neg)"
+    fun stateText(): String = (if (loaded) progressLine() else "ещё не запускалась") + "; положительных ответов $pos, отказов $neg"
 
-    fun resetProgress() { ti = 0; did = tasks.firstOrNull()?.from ?: 0; tot = 0; pos = 0; neg = 0; muted.clear(); save() }
+    fun resetProgress() { activeMs = 0; ti = 0; did = tasks.firstOrNull()?.from ?: 0; tot = 0; pos = 0; neg = 0; muted.clear(); save() }
 }
