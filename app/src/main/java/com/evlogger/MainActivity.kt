@@ -429,6 +429,7 @@ class MainActivity : Activity() {
         val dir = getExternalFilesDir(null)!!
         val files = ArrayList<java.io.File>()
         java.io.File(dir, "probe_found.csv").takeIf { it.exists() }?.let { files.add(it) }
+        java.io.File(dir, "probe_const.csv").takeIf { it.exists() }?.let { files.add(it) }
         dir.listFiles { x -> x.name.startsWith("log_") && x.name.endsWith(".csv") }?.sortedByDescending { it.lastModified() }?.take(3)?.let { files.addAll(it) }
         if (files.isEmpty()) return toast("Нет данных разведки: сначала запиши лог")
         val z = java.io.File(dir, "probe_report.zip")

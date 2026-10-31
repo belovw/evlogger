@@ -36,6 +36,9 @@ object Probe {
     private val muted = HashSet<String>()         // отключённые за ошибки блоки
     private var loaded = false
     private var lastSave = 0L
+    private val seen = HashMap<String, Int>()          // сколько раз перечитан найденный DID
+    private val first = HashMap<String, String>()      // первое значение
+    private val varies = HashSet<String>()            // менялся ли DID
     private var activeMs = 0L          // накопленное время записи с включённой разведкой
     private var lastStepMs = 0L
     private var totalDids = 0
@@ -91,10 +94,12 @@ object Probe {
         totalDids = tasks.sumOf { it.to - it.from + 1 }
         activeMs = pr().getLong("probe_ms", 0L)
         tot = pr().getInt("probe_tot", 0); pos = pr().getInt("probe_pos", 0); neg = pr().getInt("probe_neg", 0)
+        val constKeys = HashSet<String>()
+        File(dir, "probe_const.csv").takeIf { it.exists() }?.readLines()?.drop(1)?.forEach { l -> val c = l.split(","); if (c.size >= 3) constKeys.add(c[1] + c[2]) }
         val f = File(dir, "probe_found.csv")
         if (f.exists()) f.readLines().drop(1).forEach { l ->
             val c = l.split(",")
-            if (c.size >= 4) { val e = ecus.firstOrNull { it.req == c[1] }; if (e != null && foundSet.add(c[1] + c[2])) found.add(e to c[2]) }
+            if (c.size >= 4) { val e = ecus.firstOrNull { it.req == c[1] }; if (e != null && foundSet.add(c[1] + c[2]) && (c[1] + c[2]) !in constKeys) found.add(e to c[2]) }
         }
     }
 
@@ -140,12 +145,25 @@ object Probe {
         val maxN = if (gen) 1 else 2
         while (n < maxN && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
             n++; slot++
-            if (slot % 2 == 0 && found.isNotEmpty()) {            // перечитываем найденный DID
+            if (slot % 3 != 0 && found.isNotEmpty()) {            // перечитываем найденный DID
                 ri = (ri + 1) % found.size
                 val (e, d) = found[ri]
                 if (e.req in muted || (gen && e.req == "7A1")) continue
                 val v = query(e, d)
-                if (!v.isNullOrEmpty()) raws.add("PR ${e.req}>${e.resp} 22$d: $v")
+                if (!v.isNullOrEmpty()) {
+                    raws.add("PR ${e.req}>${e.resp} 22$d: $v")
+                    val key = e.req + d
+                    seen[key] = (seen[key] ?: 0) + 1
+                    val f0 = first.getOrPut(key) { v }
+                    if (v != f0) varies.add(key)
+                    // константы не тратят время: 6 одинаковых ответов -> убираем из ротации
+                    if ((seen[key] ?: 0) >= 6 && key !in varies) {
+                        found.removeAt(ri); if (ri > 0) ri--
+                        val cf = File(dir, "probe_const.csv")
+                        if (!cf.exists()) cf.writeText("time,ecu,did,data\n")
+                        cf.appendText("${stamp()},${e.req},$d,$v\n")
+                    }
+                }
             } else {                                                // разведка нового DID
                 val tk = tasks[ti]
                 if (did < tk.from || did > tk.to) did = tk.from
