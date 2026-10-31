@@ -144,7 +144,7 @@ class MainActivity : Activity() {
         btn("★ ДОМАШНЕЕ ЗАДАНИЕ") { Homework.start(this, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         probeBtn = btn("") { Probe.enable(!Probe.on); probeBtn.text = probeLabel() }
         probeBtn.text = probeLabel()
-        btn("📤 Отправить всё и очистить (один zip)") { shareAll() }
+        btn("📤 Отправить всё и очистить") { sendAll() }
 
         title("ПРИЛОЖЕНИЕ")
         btn("Обновить приложение") { updateApp() }
@@ -159,6 +159,21 @@ class MainActivity : Activity() {
         }
         root.addView(tools)
         target = tools
+        tools.addView(TextView(this).apply { text = "\nОтправка на GitHub (приватный репозиторий!). Пусто = отправка zip через «Поделиться»."; textSize = 12f })
+        val sp = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
+        val ghRepo = EditText(this).apply { hint = "Репозиторий: владелец/имя, например belovw/evlogger-data"; setText(sp.getString("gh_repo", "")); isSingleLine = true }
+        val ghToken = EditText(this).apply {
+            hint = if (sp.getString("gh_token", "").isNullOrBlank()) "Токен GitHub (Contents: read/write только на этот репозиторий)" else "Токен сохранён (введи новый, чтобы заменить)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD; isSingleLine = true
+        }
+        tools.addView(ghRepo); tools.addView(ghToken)
+        target = tools
+        btn("Сохранить настройки GitHub") {
+            val e = sp.edit().putString("gh_repo", ghRepo.text.toString().trim())
+            if (ghToken.text.isNotBlank()) { e.putString("gh_token", ghToken.text.toString().trim()); ghToken.setText("") }
+            e.apply(); toast("Сохранено")
+        }
+        btn("Отправить zip через «Поделиться» (запасной путь)") { shareAll() }
         btn("Запись лога: старт (обычно не нужна, стартует сама)") { startLog() }
         btn("CAN-монитор: старт") { startMonitor() }
         tools.addView(TextView(this).apply {
@@ -232,6 +247,29 @@ class MainActivity : Activity() {
     /** Служебные файлы: нужны приложению для работы, отправляются копией, но не удаляются. */
     private fun isKeep(f: java.io.File) = f.name.startsWith("gen_") && f.name.endsWith(".csv") && !f.name.contains("_old_") ||
         f.name == "probe_found.csv" || f.name == "probe_const.csv" || f.name == "pids.txt"
+
+    private fun sendAll() {
+        val pr = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
+        val repo = pr.getString("gh_repo", "") ?: ""; val token = pr.getString("gh_token", "") ?: ""
+        if (repo.isBlank() || token.isBlank()) return shareAll()
+        val dir = getExternalFilesDir(null)!!
+        val cur = Elm.currentFile
+        val all = (dir.listFiles() ?: emptyArray()).filter { it.isFile && !it.name.endsWith(".apk") && !it.name.startsWith("evlogger_all_") }
+        if (all.isEmpty()) return toast("Файлов пока нет")
+        toast("Загружаю ${all.size} файлов на GitHub…")
+        Thread {
+            val r = Uploader.upload(all, repo, token) { Elm.scanProgress = it }
+            Elm.scanProgress = ""
+            var del = 0
+            r.ok.forEach { f -> if (!isKeep(f) && !(Elm.logging && f == cur) && f.delete()) del++ }
+            runOnUiThread {
+                android.app.AlertDialog.Builder(this).setTitle(if (r.errors.isEmpty()) "Загружено" else "Загружено с ошибками")
+                    .setMessage("На GitHub (${r.folder}): ${r.ok.size} из ${all.size}. Удалено с телефона: $del." +
+                        (if (r.errors.isEmpty()) "" else "\n\nОшибки:\n" + r.errors.take(6).joinToString("\n")))
+                    .setPositiveButton("OK", null).show()
+            }
+        }.start()
+    }
 
     private fun shareAll() {
         val dir = getExternalFilesDir(null)!!
