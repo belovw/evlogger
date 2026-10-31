@@ -60,6 +60,8 @@ object Elm {
     private val lock = Any()
 
     @Volatile var logging = false
+    /** Какой адрес запроса/ответа сейчас выставлен в адаптере (общий для основного цикла и фоновой разведки). */
+    @Volatile var curHeader = ""
     @Volatile var monitoring = false
     @Volatile var lastValues: Map<String, String> = emptyMap()
     @Volatile var status: String = "не подключено"
@@ -159,14 +161,14 @@ object Elm {
             w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
             w.flush()
             send("ATSH7DF"); send("ATAR")
-            var lastHeader = ""
+            curHeader = ""
             while (logging && connected) {
                 val vals = LinkedHashMap<String, String>()
                 val raws = ArrayList<String>()
                 for (p in pids) {
                     if (!logging) break
                     val h = if (p.header == "-") "" else p.header
-                    if (h != lastHeader) {
+                    if (h != curHeader) {
                         if (h.contains(">")) {
                             // Личный запрос блоку: "7A1>7A9" = запрос на 7A1, ответ с 7A9
                             val parts = h.split(">")
@@ -176,13 +178,14 @@ object Elm {
                             send("ATSH7DF")
                             send(if (h.isEmpty()) "ATAR" else "ATCRA$h")
                         }
-                        lastHeader = h
+                        curHeader = h
                     }
                     val resp = send(p.cmd)
                     lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
                     raws.add(lastRaw)
                     vals[p.name] = parse(p, resp)
                 }
+                try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
                 val g = gps()
                 val now = System.currentTimeMillis()
                 w.write("$now,${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(Date(now))},")

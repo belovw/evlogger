@@ -29,6 +29,7 @@ import androidx.core.content.FileProvider
 
 class MainActivity : Activity() {
     private lateinit var spinner: Spinner
+    private lateinit var probeBtn: Button
     private lateinit var info: TextView
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
@@ -79,6 +80,7 @@ class MainActivity : Activity() {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
                 if (GenSession.precision.isNotEmpty()) append("${GenSession.precision}\n")
+                if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append("${Probe.status}\n")
                 append("Статус: ${Elm.status}\n")
                 append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
@@ -93,6 +95,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Probe.init(this)
         Elm.appVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -128,6 +131,9 @@ class MainActivity : Activity() {
         btn("■ СТОП (запись, монитор, сканер)") { stopAll() }
         btn("CAN-монитор: старт") { startMonitor() }
         btn("Отправить файл (в чат / почту / мессенджер)") { shareFile() }
+        probeBtn = btn("") { Probe.setOn(!Probe.on); probeBtn.text = probeLabel() }
+        probeBtn.text = probeLabel()
+        btn("Отправить базу разведки DID (zip)") { shareProbe() }
         btn("Обновить приложение (скачать последнюю версию)") { updateApp() }
 
         root.addView(TextView(this).apply {
@@ -410,6 +416,25 @@ class MainActivity : Activity() {
             val r = Elm.send(c)
             ui.post { term.append("> $c\n$r\n") }
         }.start()
+    }
+
+    private fun probeLabel() = if (Probe.on) "🔎 Фоновая разведка DID: ВКЛ (нажми = выкл)" else "🔎 Фоновая разведка DID: ВЫКЛ (нажми = вкл)"
+
+    private fun shareProbe() {
+        val dir = getExternalFilesDir(null)!!
+        val files = ArrayList<java.io.File>()
+        java.io.File(dir, "probe_found.csv").takeIf { it.exists() }?.let { files.add(it) }
+        dir.listFiles { x -> x.name.startsWith("log_") && x.name.endsWith(".csv") }?.sortedByDescending { it.lastModified() }?.take(3)?.let { files.addAll(it) }
+        if (files.isEmpty()) return toast("Нет данных разведки: сначала запиши лог")
+        val z = java.io.File(dir, "probe_report.zip")
+        java.util.zip.ZipOutputStream(z.outputStream()).use { zo ->
+            files.forEach { f -> zo.putNextEntry(java.util.zip.ZipEntry(f.name)); f.inputStream().use { it.copyTo(zo) }; zo.closeEntry() }
+            zo.putNextEntry(java.util.zip.ZipEntry("probe_state.txt")); zo.write((Probe.stateText() + "\n").toByteArray()); zo.closeEntry()
+        }
+        val uri = FileProvider.getUriForFile(this, "com.evlogger.files", z)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "Отправить базу разведки"))
     }
 
     private fun shareFile() {
