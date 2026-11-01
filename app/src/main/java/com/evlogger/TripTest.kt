@@ -15,6 +15,8 @@ object TripTest {
     private const val FILE = "trip_tests.csv"
     private const val HDR = "id,start,end,minutes,km_can,km_gps,kwh_out,soc0,soc1,ice_min,ice_starts,v_avg,rpm_avg,gas0,gas1,tot0,tot1,liters,l100_real,odo0,odo1"
     private const val L_PER_KM = 45.0 / 850.0
+    private const val C_DASH = 3.19            // кВт·ч/л: 33.2 кВт·ч / 10.4 л по табло, ±0.02 от округления
+    private const val PACK_KWH_PER_PCT = 0.308  // 30.8 кВт·ч на 100% SOC
     @Volatile var running = false
     @Volatile var status = ""
     @Volatile var result = ""         // текст итогов для показа окном
@@ -127,13 +129,22 @@ object TripTest {
             if (km > 1) sb.append("Расход по панели ≈ %.1f л/100 км (грубо, панель сглажена)\n".format(lp / km * 100))
         }
         if (liters != null && km > 1) {
-            sb.append("Залито до щелчка: %.2f л\n".format(liters))
+            sb.append("Залито до щелчка: %.2f л (±0.05)\n".format(liters))
             sb.append("Без поправки: %.2f л/100 км\n".format(liters / km * 100))
-            for (c in listOf(3.27, 2.2)) {
-                val lc = liters + (if (kwhOut.isNaN()) 0.0 else kwhOut / c)
-                sb.append("С поправкой на батарею (%.2f кВт·ч/л): %.2f л/100 км\n".format(c, lc / km * 100))
-            }
-            sb.append("(поправка = литры на разницу заряда батареи; при близком SOC в начале и конце она мала)\n")
+            // интервал: округление ±0.05 у литров и км, SOC в логе с шагом 0.1, коэффициент 3.19 (+-0.02) по табло машины (33.2 кВт·ч / 10.4 л)
+            val s0 = d(r[7]); val s1 = d(r[8])
+            val kwhSoc = if (s0.isNaN() || s1.isNaN()) kwhOut else (s0 - s1) * PACK_KWH_PER_PCT
+            val kwhA = if (kwhOut.isNaN()) kwhSoc else kwhOut
+            val bLo = minOf(kwhA, kwhSoc) - 0.03; val bHi = maxOf(kwhA, kwhSoc) + 0.03
+            val vals = ArrayList<Double>()
+            for (dl in listOf(-0.05, 0.05)) for (dk in listOf(-0.05, 0.05)) for (b in listOf(bLo, bHi)) for (c in listOf(C_DASH - 0.02, C_DASH + 0.02))
+                vals.add((liters + dl + b / c) / (km + dk) * 100)
+            val mid = (liters + (bLo + bHi) / 2 / C_DASH) / km * 100
+            sb.append("С поправкой на батарею (%.2f кВт·ч/л): %.2f л/100 км (от %.2f до %.2f)\n".format(C_DASH, mid, vals.min(), vals.max()))
+            sb.append("Поправка на батарею: от %+.2f до %+.2f кВт·ч (интеграл V·I %+.2f, по SOC %+.2f)\n".format(bLo, bHi, kwhA, kwhSoc))
+            if (!d(r[5]).isNaN() && d(r[5]) > 1 && Math.abs(d(r[5]) - km) / km > 0.02)
+                sb.append("Внимание: GPS %.1f км против %.1f км по CAN (%+.1f%%); по GPS расход был бы %.2f л/100 км\n".format(d(r[5]), km, (d(r[5]) - km) / km * 100, (liters + (bLo + bHi) / 2 / C_DASH) / d(r[5]) * 100))
+            sb.append("(поправка = литры на разницу заряда батареи; интервал учитывает округление ±0.05)\n")
         } else if (liters == null) sb.append("Литров ещё нет: заправься до щелчка на той же колонке и введи в «Итоги заездов».\n")
         return sb.toString()
     }
@@ -149,7 +160,7 @@ object TripTest {
                 val km = d(c[4]).let { if (it.isNaN() || it < 0.1) d(c[5]) else it }
                 val kwhOut = d(c[6])
                 c[17] = fmt(liters)
-                c[18] = fmt((liters + (if (kwhOut.isNaN()) 0.0 else kwhOut / 3.27)) / km * 100)
+                c[18] = fmt((liters + (if (kwhOut.isNaN()) 0.0 else kwhOut / C_DASH)) / km * 100)
                 lines[i] = c.joinToString(",")
                 out = describe(c, liters)
             }
