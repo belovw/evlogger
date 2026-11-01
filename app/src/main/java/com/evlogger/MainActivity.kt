@@ -42,7 +42,6 @@ class MainActivity : Activity() {
     private lateinit var didBox: EditText
     private var devices: List<BluetoothDevice> = emptyList()
     private lateinit var bannerView: TextView
-    private lateinit var genBtn: Button
     private lateinit var tripBtn: Button
     private lateinit var chargeBtn: Button
     private var alertOpen = false
@@ -79,12 +78,6 @@ class MainActivity : Activity() {
             }
             chargeBtn.text = if (ChargeSession.running) "🔌 КОНЕЦ зарядки (нажми, когда отключил пистолет)" else "🔌 Зарядка от станции: СТАРТ"
             tripBtn.text = if (TripTest.running) "🏁 ФИНИШ заезда (нажми в конечной точке)" else "🏁 Контрольный заезд: СТАРТ"
-            genBtn.text = if (!GenSession.running) "⚡ Сессия генерации: СТАРТ" else when (GenSession.phase) {
-                1 -> "⚡ Замер топлива до… (нажми = отмена)"
-                3 -> "⚡ Замер топлива после… (нажми = пропустить)"
-                4 -> "⛽ Замер перед заправкой… (нажми = отмена)"
-                else -> "⚡ СТОП (идёт генерация)"
-            }
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
@@ -150,11 +143,6 @@ class MainActivity : Activity() {
         btn("■ СТОП (запись, разведка, задания)") { stopAll() }
 
         // --- Основное ---
-        title("ГЕНЕРАЦИЯ")
-        genBtn = btn("⚡ Сессия генерации: СТАРТ") { GenSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
-        btn("⛽ Замер перед заправкой (30 с)") { GenSession.prefill(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
-        btn("Итоги генерации / ввод литров") { genSummary() }
-
         title("ЗАРЯДКА И ЗАПРАВКА")
         chargeBtn = btn("🔌 Зарядка от станции: СТАРТ") { ChargeSession.toggle(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }) { toast(it) } }
         btn("⛽ Заправка (ввод литров)") { refuelDialog() }
