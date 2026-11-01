@@ -421,32 +421,51 @@ class MainActivity : Activity() {
         }, "Отправить отчёт генерации"))
     }
 
+    private val entered = LinkedHashMap<String, String>()   // что уже введено в текущей цепочке окон
+
+    private class Ask(val step: String, val what: String, val hint: String, val where: String, val optional: Boolean)
+
+    private fun askInfo(ev: String): Ask = when (ev) {
+        "trip_gas_start" -> Ask("СТАРТ заезда · шаг 1 из 3", "ЗАПАС ХОДА ПО БЕНЗИНУ, км", "км, например 850", "На панели приборов: запас хода по бензину (не общий).", false)
+        "trip_tot_start" -> Ask("СТАРТ заезда · шаг 2 из 3", "ОБЩИЙ ЗАПАС ХОДА, км", "км, например 914", "На панели приборов: общий запас хода (бензин + электричество).", false)
+        "trip_odo_start" -> Ask("СТАРТ заезда · шаг 3 из 3", "ОДОМЕТР, км", "км, например 12345", "Общий пробег машины. Можно пропустить.", true)
+        "trip_gas_end" -> Ask("ФИНИШ заезда · шаг 1 из 3", "ЗАПАС ХОДА ПО БЕНЗИНУ, км", "км, например 583", "На панели приборов: запас хода по бензину (не общий).", false)
+        "trip_tot_end" -> Ask("ФИНИШ заезда · шаг 2 из 3", "ОБЩИЙ ЗАПАС ХОДА, км", "км, например 639", "На панели приборов: общий запас хода.", false)
+        "trip_odo_end" -> Ask("ФИНИШ заезда · шаг 3 из 3", "ОДОМЕТР, км", "км, например 12475", "Общий пробег машины. Можно пропустить.", true)
+        "chg_kwh_end" -> Ask("Зарядка закончена · шаг 1 из 2", "СКОЛЬКО кВт·ч ОТДАЛА СТАНЦИЯ", "кВт·ч, например 18.4", "Число на экране станции. Можно пропустить.", true)
+        "chg_price_end" -> Ask("Зарядка закончена · шаг 2 из 2", "ЦЕНА ЗА кВт·ч, ₸", "₸, например 55", "Тариф станции. Можно пропустить.", true)
+        "start" -> Ask("Сессия генерации · СТАРТ", "ЗАПАС ХОДА ПО БЕНЗИНУ, км", "км, например 850", "Перед запуском двигателя. Если число не изменилось с прошлого раза, просто жми OK.", false)
+        "end" -> Ask("Сессия генерации · КОНЕЦ", "ЗАПАС ХОДА ПО БЕНЗИНУ, км", "км, например 798", "ДВС заглушён. На панели приборов: запас хода по бензину.", false)
+        else -> Ask("Замер перед заправкой", "ЗАПАС ХОДА ПО БЕНЗИНУ, км", "км, например 640", "Перед заправкой. На панели приборов: запас хода по бензину.", false)
+    }
+
     private fun showRangeDialog() {
         val ev = GenSession.rangeAsk
+        if (ev.isEmpty()) return
         rangeOpen = true
+        val info = askInfo(ev)
+        val group = ev.substringBeforeLast("_").let { if (ev.startsWith("trip")) (if (ev.endsWith("start")) "ts" else "te") else ev }
+        if (ev == "trip_gas_start") entered.clear()
+        if (ev == "trip_gas_end") { entered.keys.removeAll { it.startsWith("ts_") || it.startsWith("te_") } ; entered.clear() }
         val et = EditText(this).apply {
-            hint = "км, например 821"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = info.hint; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            textSize = 24f
         }
         val pk = if (ev == "end" || ev.startsWith("trip") || ev.startsWith("chg")) null else GenSession.prevKm(this)
         if (pk != null) { et.setText("%.0f".format(pk)); et.selectAll() }
-        val tripMsg = when (ev) {
-            "trip_gas_start" -> "Старт заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
-            "trip_tot_start" -> "Старт заезда. Введи ОБЩИЙ запас хода с панели (км, бензин + электро)."
-            "trip_gas_end" -> "Финиш заезда. Введи запас хода по БЕНЗИНУ с панели (км)."
-            "trip_tot_end" -> "Финиш заезда. Введи ОБЩИЙ запас хода с панели (км)."
-            "chg_kwh_end" -> "Зарядка закончена. Сколько кВт·ч показала станция на экране? Можно пропустить."
-            "chg_price_end" -> "Цена за кВт·ч на станции, ₸. Можно пропустить."
-            "trip_odo_start" -> "Старт заезда. Показание ОДОМЕТРА (км) для контроля пробега. Можно пропустить."
-            "trip_odo_end" -> "Финиш заезда. Показание ОДОМЕТРА (км). Можно пропустить."
-            else -> null
+        val msg = buildString {
+            append("ВВЕДИ: ${info.what}\n\n${info.where}")
+            if (pk != null) append("\n\nПрошлое значение подставлено. Не изменилось: жми OK.")
+            if (entered.isNotEmpty()) append("\n\nУже введено: " + entered.entries.joinToString("; ") { "${it.key} = ${it.value}" })
+            if (info.optional) append("\n\n(необязательно: «Пропустить»)")
         }
-        val msg = tripMsg ?: (if (pk != null) "Прошлое значение подставлено: если не изменилось, просто жми OK.\n\n" else "") + when (ev) {
-            "start" -> "Перед запуском двигателя. Посмотри на панели запас хода по БЕНЗИНУ (км) и введи число. Двигатель пока не запускай."
-            "end" -> "Сессия закончена, ДВС заглушён. Введи запас хода по БЕНЗИНУ с панели (км)."
-            else -> "Перед заправкой. Введи запас хода по БЕНЗИНУ с панели (км)."
-        }
-        android.app.AlertDialog.Builder(this).setTitle("Запас хода по бензину").setMessage(msg).setView(et).setCancelable(false)
-            .setPositiveButton("OK") { _, _ -> GenSession.submitRange(et.text.toString().replace(',', '.').toDoubleOrNull()); rangeOpen = false }
+        val shortName = info.what.substringBefore(",").lowercase()
+        android.app.AlertDialog.Builder(this).setTitle(info.step).setMessage(msg).setView(et).setCancelable(false)
+            .setPositiveButton("OK") { _, _ ->
+                val v = et.text.toString().replace(',', '.').toDoubleOrNull()
+                if (v != null) { entered[shortName] = "%.0f".format(v); toast("Принято: $shortName = ${"%.0f".format(v)}") }
+                GenSession.submitRange(v); rangeOpen = false
+            }
             .setNegativeButton("Пропустить") { _, _ -> GenSession.submitRange(null); rangeOpen = false }.show()
     }
 

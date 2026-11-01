@@ -68,7 +68,7 @@ object GenSession {
         return if (rangeDone && !rangeAnswer.isNaN()) rangeAnswer else null
     }
 
-    fun submitRange(km: Double?) { rangeAnswer = km ?: Double.NaN; rangeDone = true }
+    fun submitRange(km: Double?) { rangeAnswer = km ?: Double.NaN; rangeDone = true; rangeAsk = "" }
 
     private fun lastKm(pr: android.content.SharedPreferences, cyc: Int): Double? {
         val v = pr.getFloat("gen_last_km", Float.NaN)
