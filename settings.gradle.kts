@@ -13,3 +13,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "EvLogger"
 include(":app")
+include(":hu")
