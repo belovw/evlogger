@@ -1,0 +1,2 @@
+APK: /vendor/priv-app/BigsurCarController/BigsurCarController.apk
+bindService не удался: служба не ответила за 8 с
