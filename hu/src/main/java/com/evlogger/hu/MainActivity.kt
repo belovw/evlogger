@@ -18,7 +18,9 @@ import java.util.Locale
 class MainActivity : Activity() {
     private lateinit var out: TextView
     private lateinit var recBtn: Button
+    private lateinit var recBtn2: Button
     @Volatile private var recording = false
+    @Volatile private var recordingReal = false
     private val dir: File get() = getExternalFilesDir(null)!!
     private fun prefs() = getSharedPreferences("hu", Context.MODE_PRIVATE)
     private fun ts() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -29,8 +31,11 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         fun btn(t: String, f: () -> Unit) = Button(this).apply { text = t; textSize = 18f; setOnClickListener { f() }; root.addView(this) }
         root.addView(TextView(this).apply { text = "HU Probe: разведка автомобильных данных магнитолы (только чтение)"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
-        btn("1. Список свойств машины и их значения") { Thread { scan() }.start() }
-        recBtn = btn("2. Запись изменений: СТАРТ") { toggleRec() }
+        btn("1. Список свойств (заглушка android.car — для сверки)") { Thread { scan() }.start() }
+        recBtn = btn("2. Запись изменений (заглушка): СТАРТ") { toggleRec() }
+        root.addView(TextView(this).apply { text = "\nНастоящие данные (служба com.mega.car):"; textSize = 16f; setTypeface(null, Typeface.BOLD) })
+        btn("4. Реальные данные: разовое чтение") { Thread { scanReal() }.start() }
+        recBtn2 = btn("5. Реальные данные: запись изменений СТАРТ") { toggleRecReal() }
         val repo = EditText(this).apply { hint = "GitHub репозиторий (владелец/имя)"; setText(prefs().getString("repo", "")) }
         val tok = EditText(this).apply { hint = "GitHub токен (Contents: запись)"; setText(prefs().getString("tok", "")) }
         root.addView(repo); root.addView(tok)
@@ -87,6 +92,51 @@ class MainActivity : Activity() {
                 if (dt > 0) Thread.sleep(dt)
             }
             runOnUiThread { recBtn.text = "2. Запись изменений: СТАРТ" }
+        }.start()
+    }
+
+    private fun scanReal() {
+        log("Подключаюсь к com.mega.car…")
+        if (!CarApi2.connect(this)) { log("НЕ ПОДКЛЮЧИЛОСЬ: ${CarApi2.lastError}"); File(dir, "hu_mega_connect_${ts()}.txt").writeText("${CarApi2.statusLine}\nerror: ${CarApi2.lastError}\n"); return }
+        val sb = StringBuilder("name,id,area,value,status_time,error\n")
+        var ok = 0; var err = 0
+        for (p in CarIds.ALL) {
+            val (v, st, e) = CarApi2.read(p.id, p.area)
+            if (e.isEmpty()) ok++ else err++
+            sb.append("%s,%d,%d,%s,%s,%s\n".format(p.name, p.id, p.area, v.replace(",", ";").replace("\n", " "), st, e.replace(",", ";")))
+        }
+        val f = File(dir, "hu_mega_${ts()}.csv"); f.writeText(sb.toString())
+        log("Mega: прочитано $ok, отказов $err из ${CarIds.ALL.size}.\nФайл: ${f.name}\n\n" + sb.lines().take(60).joinToString("\n"))
+    }
+
+    private fun toggleRecReal() {
+        if (recordingReal) { recordingReal = false; return }
+        recordingReal = true; recBtn2.text = "5. Реальные данные: запись изменений СТОП"
+        Thread {
+            if (!CarApi2.connect(this)) { log("НЕ ПОДКЛЮЧИЛОСЬ: ${CarApi2.lastError}"); recordingReal = false; runOnUiThread { recBtn2.text = "5. Реальные данные: запись изменений СТАРТ" }; return@Thread }
+            val f = File(dir, "hu_mega_rec_${ts()}.csv")
+            f.writeText("time_ms,iso,name,id,area,value,status_time\n")
+            val last = HashMap<String, String>()
+            var n = 0L; var rows = 0L
+            while (recordingReal) {
+                val t0 = System.currentTimeMillis()
+                val sb = StringBuilder()
+                for (p in CarIds.ALL) {
+                    val (v, st, e) = CarApi2.read(p.id, p.area)
+                    if (e.isNotEmpty()) continue
+                    val k = "${p.id}/${p.area}"
+                    if (last[k] != v) {
+                        last[k] = v; rows++
+                        sb.append("$t0,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(t0))},%s,%d,%d,%s,%s\n".format(p.name, p.id, p.area, v.replace(",", ";"), st))
+                    }
+                }
+                if (sb.isNotEmpty()) f.appendText(sb.toString())
+                n++
+                log("Mega-запись: $n проходов, $rows изменений\nФайл: ${f.name}")
+                val dt = 1000 - (System.currentTimeMillis() - t0)
+                if (dt > 0) Thread.sleep(dt)
+            }
+            runOnUiThread { recBtn2.text = "5. Реальные данные: запись изменений СТАРТ" }
         }.start()
     }
 

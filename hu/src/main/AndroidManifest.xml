@@ -17,6 +17,19 @@
     <uses-permission android:name="android.car.permission.READ_CAR_DISPLAY_UNITS" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_CLIMATE" />
 
+    <!-- Права производителя: без них вызовы к их сервису просто откажут с понятной ошибкой в отчёте. -->
+    <uses-permission android:name="mega.car.permission.ECU" />
+    <uses-permission android:name="mega.car.permission.ELEC_POWER" />
+    <uses-permission android:name="mega.car.permission.CLIMATE" />
+    <uses-permission android:name="mega.car.permission.VEHICLE_MOTION" />
+    <uses-permission android:name="mega.car.permission.VEHICLE_BODY" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <queries>
+        <package android:name="com.mega.car" />
+        <package android:name="com.mega.controller" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="HU Probe"

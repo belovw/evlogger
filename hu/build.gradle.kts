@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.evlogger.hu"
         minSdk = 26
-        targetSdk = 30
+        targetSdk = 29   // ниже 30: не подпадает под ограничение видимости пакетов Android 11, com.mega.car виден без явных <queries>
         val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionCode = run
         versionName = "0.$run"
