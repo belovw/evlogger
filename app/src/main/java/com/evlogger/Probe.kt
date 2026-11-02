@@ -168,7 +168,7 @@ object Probe {
         val maxN = if (gen) 1 else 2
         while (n < maxN && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
             n++; slot++
-            if (slot % 3 != 0 && found.isNotEmpty()) {            // перечитываем найденный DID
+            if (slot % 4 == 0 && found.isNotEmpty()) {            // перечитываем найденный DID (каждый 4-й запрос, остальные идут на разведку)
                 ri = (ri + 1) % found.size
                 val (e, d) = found[ri]
                 if (e.req in muted || (gen && e.req == "7A1")) continue
@@ -180,7 +180,7 @@ object Probe {
                     val f0 = first.getOrPut(key) { v }
                     if (v != f0) varies.add(key)
                     // константы не тратят время: 6 одинаковых ответов -> убираем из ротации
-                    if ((seen[key] ?: 0) >= 6 && key !in varies) {
+                    if ((seen[key] ?: 0) >= 4 && key !in varies) {
                         found.removeAt(ri); if (ri > 0) ri--
                         val cf = File(dir, "probe_const.csv")
                         if (!cf.exists()) cf.writeText("time,ecu,did,data\n")
@@ -222,7 +222,7 @@ object Probe {
         if (did > tk.to) { ti = (ti + 1) % tasks.size; did = tasks[ti].from }
     }
 
-    fun stateText(): String = (if (loaded) progressLine() else "ещё не запускалась") + "; положительных ответов $pos, отказов $neg"
+    fun stateText(): String = (if (loaded) progressLine() else "в этом запуске приложения ещё не начиналась (сохранено в прошлый раз: запросов ${pr().getInt("probe_tot", 0)}, позиция блок ${pr().getInt("probe_task", 0)} DID ${pr().getInt("probe_did", 0)})") + "; положительных ответов $pos, отказов $neg"
 
     fun resetProgress() { activeMs = 0; ti = 0; did = tasks.firstOrNull()?.from ?: 0; tot = 0; pos = 0; neg = 0; muted.clear(); save() }
 }
