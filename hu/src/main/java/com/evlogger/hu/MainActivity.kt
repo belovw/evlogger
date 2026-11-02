@@ -36,6 +36,9 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply { text = "\nНастоящие данные (служба com.mega.car):"; textSize = 16f; setTypeface(null, Typeface.BOLD) })
         btn("4. Реальные данные: разовое чтение") { Thread { scanReal() }.start() }
         recBtn2 = btn("5. Реальные данные: запись изменений СТАРТ") { toggleRecReal() }
+        root.addView(TextView(this).apply { text = "\nОбходной путь через com.mega.controller (без permission):"; textSize = 16f; setTypeface(null, Typeface.BOLD) })
+        btn("6. Перебор getManager() у ICarController") { Thread { probeManager() }.start() }
+        btn("7. Проверка ControllerProvider (ContentProvider)") { Thread { probeProvider() }.start() }
         val repo = EditText(this).apply { hint = "GitHub репозиторий (владелец/имя)"; setText(prefs().getString("repo", "")) }
         val tok = EditText(this).apply { hint = "GitHub токен (Contents: запись)"; setText(prefs().getString("tok", "")) }
         root.addView(repo); root.addView(tok)
@@ -138,6 +141,20 @@ class MainActivity : Activity() {
             }
             runOnUiThread { recBtn2.text = "5. Реальные данные: запись изменений СТАРТ" }
         }.start()
+    }
+
+    private fun probeManager() {
+        log("Перебираю getManager()…")
+        val txt = CarApi3.probeGetManager(this)
+        val f = File(dir, "hu_mgr_${ts()}.txt"); f.writeText(txt)
+        log("Готово. Файл: ${f.name}\n\n$txt")
+    }
+
+    private fun probeProvider() {
+        log("Проверяю ControllerProvider…")
+        val txt = CarApi3.probeProvider(this)
+        val f = File(dir, "hu_prov_${ts()}.txt"); f.writeText(txt)
+        log("Готово. Файл: ${f.name}\n\n$txt")
     }
 
     private fun upload() {
