@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     @Volatile private var gpsLat = 0.0
     @Volatile private var gpsLon = 0.0
     @Volatile private var gpsSpeed = 0.0
+    @Volatile private var gpsMs = 0L
 
     private val refresh = object : Runnable {
         override fun run() {
@@ -78,6 +79,7 @@ class MainActivity : Activity() {
             }
             chargeBtn.text = if (ChargeSession.running) "🔌 КОНЕЦ зарядки (нажми, когда отключил пистолет)" else "🔌 Зарядка от станции: СТАРТ"
             tripBtn.text = if (TripTest.running) "🏁 ФИНИШ заезда (нажми в конечной точке)" else "🏁 Контрольный заезд: СТАРТ"
+            if (gpsMs != 0L && now - gpsMs > 5000) gpsSpeed = 0.0   // GPS замёрз: не тянуть старую скорость в логи
             info.text = buildString {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
@@ -369,7 +371,7 @@ class MainActivity : Activity() {
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, object : LocationListener {
             override fun onLocationChanged(l: Location) {
-                gpsLat = l.latitude; gpsLon = l.longitude; gpsSpeed = l.speed * 3.6
+                gpsLat = l.latitude; gpsLon = l.longitude; gpsSpeed = l.speed * 3.6; gpsMs = System.currentTimeMillis()
             }
         })
     }
