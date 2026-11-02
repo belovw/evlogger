@@ -82,6 +82,7 @@ object Probe {
 
     private fun load(dir: File) {
         loaded = true
+        dirRef = dir
         val byReq = HashMap<String, Ecu>()
         appCtx.assets.open("probe_plan.txt").bufferedReader().readLines().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }.forEach {
@@ -92,6 +93,14 @@ object Probe {
                 }
             }
         val planV = 2
+        val pf = File(dir, "probe_progress.txt")
+        if (pf.exists()) {            // прогресс в файле переживает сброс настроек приложения при обновлении
+            try {
+                val a = pf.readText().trim().split(",")
+                if (a.size >= 6) pr().edit().putInt("probe_plan_v", planV).putInt("probe_task", a[0].toInt()).putInt("probe_did", a[1].toInt())
+                    .putInt("probe_tot", a[2].toInt()).putInt("probe_pos", a[3].toInt()).putInt("probe_neg", a[4].toInt()).putLong("probe_ms", a[5].toLong()).apply()
+            } catch (_: Exception) {}
+        }
         if (pr().getInt("probe_plan_v", 0) != planV) {          // план сменился: счётчики с нуля
             pr().edit().putInt("probe_plan_v", planV).putInt("probe_task", 0).putInt("probe_did", 0)
                 .putInt("probe_tot", 0).putInt("probe_pos", 0).putInt("probe_neg", 0).putLong("probe_ms", 0L).apply()
@@ -126,7 +135,9 @@ object Probe {
         } catch (_: Exception) {}
     }
 
+    @Volatile private var dirRef: File? = null
     private fun save() {
+        try { dirRef?.let { File(it, "probe_progress.txt").writeText("$ti,$did,$tot,$pos,$neg,$activeMs\n") } } catch (_: Exception) {}
         pr().edit().putInt("probe_task", ti).putInt("probe_did", did).putInt("probe_tot", tot).putInt("probe_pos", pos).putInt("probe_neg", neg).putLong("probe_ms", activeMs).apply()
     }
 

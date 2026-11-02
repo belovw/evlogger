@@ -294,7 +294,7 @@ class MainActivity : Activity() {
 
     /** Служебные файлы: нужны приложению для работы, отправляются копией, но не удаляются. */
     private fun isKeep(f: java.io.File) = f.name.startsWith("gen_") && f.name.endsWith(".csv") && !f.name.contains("_old_") ||
-        f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name.startsWith("charge_sessions") || f.name.startsWith("refuels") || f.name == "probe_const.csv" || f.name == "pids.txt"
+        f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name.startsWith("charge_sessions") || f.name.startsWith("refuels") || f.name == "probe_const.csv" || f.name == "probe_progress.txt" || f.name == "pids.txt"
 
     private fun sendAll() {
         val pr = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
