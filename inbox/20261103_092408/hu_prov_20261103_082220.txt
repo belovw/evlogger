@@ -1,0 +1,16 @@
+query(content://com.mega.controller.utils.ControllerProvider) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/car) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/property) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/carProperty) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/vehicle) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/status) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/info) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/config) = null cursor
+query(content://com.mega.controller.utils.ControllerProvider/get) = null cursor
+call("getCarProperty") = getCarProperty=false
+call("getProperty") = getProperty=false
+call("get") = get=false
+call("getValue") = getValue=false
+call("query") = query=false
+call("getInfo") = getInfo=false
+call("getConfig") = getConfig=false
