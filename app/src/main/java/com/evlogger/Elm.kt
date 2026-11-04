@@ -101,24 +101,36 @@ object Elm {
         status = "не подключено"
     }
 
-    /** Отправить команду и дождаться приглашения '>' */
+    /** Отправить команду и дождаться приглашения '>'.
+     *  Если во время записи/чтения реально рвётся соединение (адаптер пропал с BT —
+     *  машина закрыта, ELM327 обесточен и т.п.), ловим это здесь и сразу вызываем close(),
+     *  чтобы connected/status честно стали "не подключено", а не висели в "подключено"
+     *  навечно (именно это раньше вызывало баг "машина давно закрыта, а приложение
+     *  показывает связь"). */
     fun send(cmd: String, timeoutMs: Long = 2500): String = synchronized(lock) {
         val o = output ?: return "NO CONNECTION"
         val i = input ?: return "NO CONNECTION"
-        while (i.available() > 0) i.read()
-        o.write((cmd + "\r").toByteArray()); o.flush()
-        val sb = StringBuilder()
-        var end = System.currentTimeMillis() + timeoutMs
-        var extended = false
-        while (System.currentTimeMillis() < end) {
-            if (!extended && sb.contains("SEARCHING")) { end += 12000; extended = true }
-            if (i.available() > 0) {
-                val ch = i.read().toChar()
-                if (ch == '>') break
-                sb.append(ch)
-            } else Thread.sleep(10)
+        try {
+            while (i.available() > 0) i.read()
+            o.write((cmd + "\r").toByteArray()); o.flush()
+            val sb = StringBuilder()
+            var end = System.currentTimeMillis() + timeoutMs
+            var extended = false
+            while (System.currentTimeMillis() < end) {
+                if (!extended && sb.contains("SEARCHING")) { end += 12000; extended = true }
+                if (i.available() > 0) {
+                    val b = i.read()
+                    if (b < 0) throw java.io.IOException("EOF на входном потоке (адаптер отключился)")
+                    val ch = b.toChar()
+                    if (ch == '>') break
+                    sb.append(ch)
+                } else Thread.sleep(10)
+            }
+            return sb.toString().replace("\r", "\n").trim()
+        } catch (e: Exception) {
+            close()
+            return "NO CONNECTION"
         }
-        return sb.toString().replace("\r", "\n").trim()
     }
 
     fun loadPids(text: String): List<Pid> = text.lines()
@@ -167,56 +179,76 @@ object Elm {
         autoLog = false
     }
 
-    /** Основной цикл опроса. Вызывать из фонового потока. */
+    /** Сколько миллисекунд подряд ни один PID не дал значения, прежде чем считаем связь
+     *  по-настоящему мёртвой и сами рвём соединение (адаптер пропал, но read/write не
+     *  бросили исключение — например, тихо виснут на таймауте без EOF). */
+    private const val STALE_DISCONNECT_MS = 45_000L
+
+    /** Основной цикл опроса. Вызывать из фонового потока.
+     *  Обёрнут в try/finally: если что-то бросит исключение (обрыв BT, ошибка записи файла
+     *  и т.п.), logging и connected всё равно корректно сбросятся, а не останутся "висеть"
+     *  в состоянии "подключено"/"идёт запись" навечно. */
     fun logLoop(dir: File, pids: List<Pid>, gps: () -> Triple<Double, Double, Double>) {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val f = File(dir, "log_$stamp.csv")
         currentFile = f
         logging = true
         lastDataMs = System.currentTimeMillis()
-        f.bufferedWriter().use { w ->
-            w.write("# app version: $appVersion\n")
-            initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
-            w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
-            w.flush()
-            send("ATSH7DF"); send("ATAR")
-            curHeader = ""
-            while (logging && connected) {
-                val vals = LinkedHashMap<String, String>()
-                val raws = ArrayList<String>()
-                for (p in pids) {
-                    if (!logging) break
-                    val h = if (p.header == "-") "" else p.header
-                    if (h != curHeader) {
-                        if (h.contains(">")) {
-                            // Личный запрос блоку: "7A1>7A9" = запрос на 7A1, ответ с 7A9
-                            val parts = h.split(">")
-                            send("ATSH${parts[0]}"); send("ATCRA${parts[1]}")
-                        } else {
-                            // Общий запрос 7DF, ответ принимаем только с адреса блока (ATCRA)
-                            send("ATSH7DF")
-                            send(if (h.isEmpty()) "ATAR" else "ATCRA$h")
-                        }
-                        curHeader = h
-                    }
-                    val resp = send(p.cmd)
-                    lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
-                    raws.add(lastRaw)
-                    vals[p.name] = parse(p, resp)
-                }
-                try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
-                val g = gps()
-                val now = System.currentTimeMillis()
-                w.write("$now,${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(Date(now))},")
-                val rawCell = raws.joinToString(" ## ").replace("\"", "'")
-                w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
+        try {
+            f.bufferedWriter().use { w ->
+                w.write("# app version: $appVersion\n")
+                initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
+                w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
                 w.flush()
-                lastValues = vals
-                try { Ledger.tick(vals, now) } catch (_: Exception) {}
-                if (vals.values.any { it.isNotEmpty() }) lastDataMs = now
+                send("ATSH7DF"); send("ATAR")
+                curHeader = ""
+                while (logging && connected) {
+                    val vals = LinkedHashMap<String, String>()
+                    val raws = ArrayList<String>()
+                    for (p in pids) {
+                        if (!logging || !connected) break
+                        val h = if (p.header == "-") "" else p.header
+                        if (h != curHeader) {
+                            if (h.contains(">")) {
+                                // Личный запрос блоку: "7A1>7A9" = запрос на 7A1, ответ с 7A9
+                                val parts = h.split(">")
+                                send("ATSH${parts[0]}"); send("ATCRA${parts[1]}")
+                            } else {
+                                // Общий запрос 7DF, ответ принимаем только с адреса блока (ATCRA)
+                                send("ATSH7DF")
+                                send(if (h.isEmpty()) "ATAR" else "ATCRA$h")
+                            }
+                            curHeader = h
+                        }
+                        val resp = send(p.cmd)
+                        lastRaw = "${p.cmd}: ${resp.replace("\n", " | ")}"
+                        raws.add(lastRaw)
+                        vals[p.name] = parse(p, resp)
+                    }
+                    if (!connected) break // send() уже обнаружил реальный обрыв и сам закрыл сессию
+                    try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
+                    val g = gps()
+                    val now = System.currentTimeMillis()
+                    w.write("$now,${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(Date(now))},")
+                    val rawCell = raws.joinToString(" ## ").replace("\"", "'")
+                    w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
+                    w.flush()
+                    lastValues = vals
+                    try { Ledger.tick(vals, now) } catch (_: Exception) {}
+                    if (vals.values.any { it.isNotEmpty() }) {
+                        lastDataMs = now
+                    } else if (now - lastDataMs > STALE_DISCONNECT_MS) {
+                        // ни одного значения уже STALE_DISCONNECT_MS — адаптер не отвечает,
+                        // связь мёртвая (даже если BluetoothSocket формально ещё "connected")
+                        close()
+                    }
+                }
             }
+        } catch (e: Exception) {
+            close()
+        } finally {
+            logging = false
         }
-        logging = false
     }
 
     // ---------- Mode 22 (UDS ReadDataByIdentifier): ТОЛЬКО ЧТЕНИЕ ----------
