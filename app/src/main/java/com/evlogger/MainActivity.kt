@@ -359,7 +359,12 @@ class MainActivity : Activity() {
                 devices.map { "${it.name} (${it.address})" })
             val saved = getSharedPreferences("evlogger", Context.MODE_PRIVATE).getString("last_mac", null)
             val idx = devices.indexOfFirst { it.address == saved }
-            if (idx >= 0) spinner.setSelection(idx)
+            if (idx >= 0) {
+                spinner.setSelection(idx)
+                // автоподключение к последнему использованному ELM327, без нажатия кнопки —
+                // чтобы не терять время (особенно важно на холодном старте ДВС)
+                if (!Elm.connected && !Elm.connecting) connect()
+            }
         } catch (e: SecurityException) {
             placeholder("⚠ Нет разрешения Bluetooth")
         }
