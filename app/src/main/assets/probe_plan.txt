@@ -1,4 +1,7 @@
 # План фоновой разведки: запрос ответ от до (hex). Порядок = приоритет. Построен по обзорам блоков 28.10.
+# Добавлены 09.11: 706,707,735,7A7,7C2,7C3,7E3 - были найдены сканом блоков, но раньше не разведывались.
+# Не добавлены: 7A5,7A6 (отвечают с того же адреса 7A8, что и 7A0 - похоже, это алиасы, не отдельные ECU),
+# 7E5 (на 3E00 отвечает отказом "7F 3E 11" = ServiceNotSupported, то есть реально там ничего нет).
 7A1 7A9 F200 F3FF
 7E0 7E8 F400 F4FF
 7E1 7E9 F300 F3FF
@@ -71,3 +74,31 @@
 7D2 7DA F010 F01F
 7D2 7DA FD10 FD1F
 7E7 7EF F010 F01F
+706 70E F010 F01F
+706 70E F1A0 F1BF
+706 70E F1F0 F1FF
+706 70E FEF0 FEFF
+707 70F F010 F01F
+707 70F F1A0 F1BF
+707 70F F1F0 F1FF
+707 70F FEF0 FEFF
+735 73D F010 F01F
+735 73D F1A0 F1BF
+735 73D F1F0 F1FF
+735 73D FEF0 FEFF
+7A7 7AF F010 F01F
+7A7 7AF F1A0 F1BF
+7A7 7AF F1F0 F1FF
+7A7 7AF FEF0 FEFF
+7C2 7CA F010 F01F
+7C2 7CA F1A0 F1BF
+7C2 7CA F1F0 F1FF
+7C2 7CA FEF0 FEFF
+7C3 7CB F010 F01F
+7C3 7CB F1A0 F1BF
+7C3 7CB F1F0 F1FF
+7C3 7CB FEF0 FEFF
+7E3 7EB F010 F01F
+7E3 7EB F1A0 F1BF
+7E3 7EB F1F0 F1FF
+7E3 7EB FEF0 FEFF
