@@ -46,6 +46,7 @@ class MainActivity : Activity() {
 
     private lateinit var tabButtons: List<Button>
     private lateinit var tabPanels: List<LinearLayout>
+    private lateinit var searchStatus: TextView
 
     @Volatile private var gpsLat = 0.0
     @Volatile private var gpsLon = 0.0
@@ -83,6 +84,17 @@ class MainActivity : Activity() {
                 else if (v.isNotEmpty() && !Elm.probeOnlyActive) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
                 if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
                 append("gps_speed = %.1f км/ч   gps_alt = %.0f м".format(gpsSpeed, gpsAlt))
+            }
+            // Дублируем прогресс поиска прямо у вкладок "Поиск блоков"/"Поиск PID" - иначе его
+            // видно только в блоке "ПОДКЛЮЧЕНИЕ" наверху экрана, до которого после перехода на
+            // вкладку нужно долго скроллить обратно, и кажется, что индикации вовсе нет.
+            val sText = buildString {
+                if (Elm.scanning || Elm.scanProgress.isNotEmpty()) append("Сканер: ${Elm.scanProgress}\n")
+                if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append(Probe.status)
+            }
+            if (sText.isEmpty()) { searchStatus.visibility = android.view.View.GONE } else {
+                searchStatus.text = sText.trim()
+                searchStatus.visibility = android.view.View.VISIBLE
             }
             ui.postDelayed(this, 1000)
         }
@@ -152,6 +164,12 @@ class MainActivity : Activity() {
             tabButtonsMut.add(b)
         }
         tabButtons = tabButtonsMut
+
+        searchStatus = TextView(this).apply {
+            textSize = 13f; setPadding(4, 16, 4, 8)
+            setTextColor(0xFF2E7D32.toInt()); visibility = android.view.View.GONE
+        }
+        root.addView(searchStatus)
 
         val panelsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(panelsContainer)
