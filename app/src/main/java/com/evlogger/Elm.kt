@@ -134,6 +134,12 @@ object Elm {
                     sb.append(ch)
                 } else Thread.sleep(10)
             }
+            // abortNow — одноразовый сигнал "прервать ЭТО конкретное ожидание", использовали — сразу сбрасываем.
+            // Раньше сбрасывался только в finally у logLoop; если "СТОП" нажимали, когда logLoop не был активен
+            // (например, запись уже сама остановилась), флаг оставался true навечно, и КАЖДЫЙ следующий send()
+            // в любом месте приложения (watchDids, scanDids и т.д.) мгновенно возвращал пустую строку без единого
+            // реального запроса к машине — именно это и случилось во всех 6 этапах домашнего задания.
+            if (abortNow) abortNow = false
             return sb.toString().replace("\r", "\n").trim()
         } catch (e: Exception) {
             close()
@@ -268,6 +274,7 @@ object Elm {
     fun awaitStopped(timeoutMs: Long = 8000) {
         val end = System.currentTimeMillis() + timeoutMs
         while (loggingActive && System.currentTimeMillis() < end) Thread.sleep(30)
+        abortNow = false   // страховка: сбрасываем в любом случае, даже если logLoop не был активен вовсе
     }
 
     // ---------- Mode 22 (UDS ReadDataByIdentifier): ТОЛЬКО ЧТЕНИЕ ----------
