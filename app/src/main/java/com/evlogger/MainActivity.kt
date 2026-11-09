@@ -297,6 +297,7 @@ class MainActivity : Activity() {
         f.name == "probe_found.csv" || f.name.startsWith("trip_tests") || f.name.startsWith("charge_sessions") || f.name.startsWith("refuels") || f.name == "probe_const.csv" || f.name == "probe_progress.txt" || f.name == "pids.txt"
 
     private fun sendAll() {
+        if (Elm.loggingActive) return toast("Файл лога ещё дописывается/закрывается — подожди пару секунд после «Стоп» и попробуй снова")
         val pr = getSharedPreferences("evlogger", Context.MODE_PRIVATE)
         val repo = pr.getString("gh_repo", "") ?: ""; val token = pr.getString("gh_token", "") ?: ""
         if (repo.isBlank() || token.isBlank()) return shareAll()
@@ -320,6 +321,7 @@ class MainActivity : Activity() {
     }
 
     private fun shareAll() {
+        if (Elm.loggingActive) return toast("Файл лога ещё дописывается/закрывается — подожди пару секунд после «Стоп» и попробуй снова")
         val dir = getExternalFilesDir(null)!!
         dir.listFiles { x -> x.name.startsWith("evlogger_all_") }?.forEach { it.delete() }
         val cur = Elm.currentFile
@@ -514,7 +516,12 @@ class MainActivity : Activity() {
         Elm.logging = false
         Elm.monitoring = false
         Elm.scanning = false
-        toast("Остановлено")
+        Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
+        toast("Останавливаю…")
+        Thread {
+            Elm.awaitStopped(8000) // дожидаемся, пока файл лога реально закрыт — иначе «Отправить» может словить его на полпути
+            runOnUiThread { toast("Остановлено, файл закрыт — можно отправлять") }
+        }.start()
     }
 
     private fun busy(): Boolean { Elm.releaseAutoLog(); return Elm.logging || Elm.monitoring || Elm.scanning }

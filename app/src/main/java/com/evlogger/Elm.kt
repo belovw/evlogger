@@ -71,6 +71,14 @@ object Elm {
     @Volatile var appVersion: String = "?"
     @Volatile var lastDataMs: Long = 0L
     @Volatile var connecting = false
+    /** Запрос немедленного обрыва текущего ожидания ответа в send() — чтобы "Стоп" останавливал
+     *  не "когда-нибудь после текущего таймаута", а сразу же. Сбрасывается сам после остановки. */
+    @Volatile var abortNow = false
+    /** true всё время, пока фоновый поток записи лога реально открыт/пишет файл — в отличие от
+     *  logging (это просто "запрос на остановку"), этот флаг падает только после того, как файл
+     *  действительно закрыт. По нему нужно дожидаться перед "Отправить всё", иначе можно словить
+     *  гонку: файл ещё дописывается/закрывается, а его уже упаковывают в zip или удаляют. */
+    @Volatile var loggingActive = false
     @Volatile var lastRaw: String = ""
     @Volatile var initLog: String = ""
     var onTerminalLine: ((String) -> Unit)? = null
@@ -116,7 +124,7 @@ object Elm {
             val sb = StringBuilder()
             var end = System.currentTimeMillis() + timeoutMs
             var extended = false
-            while (System.currentTimeMillis() < end) {
+            while (System.currentTimeMillis() < end && !abortNow) {
                 if (!extended && sb.contains("SEARCHING")) { end += 12000; extended = true }
                 if (i.available() > 0) {
                     val b = i.read()
@@ -193,6 +201,7 @@ object Elm {
         val f = File(dir, "log_$stamp.csv")
         currentFile = f
         logging = true
+        loggingActive = true
         lastDataMs = System.currentTimeMillis()
         try {
             f.bufferedWriter().use { w ->
@@ -248,7 +257,16 @@ object Elm {
             close()
         } finally {
             logging = false
+            abortNow = false
+            loggingActive = false
         }
+    }
+
+    /** Дождаться, пока фоновый поток записи реально закроет файл (не дольше timeoutMs).
+     *  Вызывать из UI после "Стоп", прежде чем паковать/отправлять/удалять логи. */
+    fun awaitStopped(timeoutMs: Long = 8000) {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (loggingActive && System.currentTimeMillis() < end) Thread.sleep(30)
     }
 
     // ---------- Mode 22 (UDS ReadDataByIdentifier): ТОЛЬКО ЧТЕНИЕ ----------
