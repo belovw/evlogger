@@ -258,7 +258,15 @@ class MainActivity : Activity() {
 
     private fun showTab(i: Int) {
         tabPanels.forEachIndexed { idx, p -> p.visibility = if (idx == i) android.view.View.VISIBLE else android.view.View.GONE }
-        tabButtons.forEachIndexed { idx, b -> b.setTypeface(null, if (idx == i) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL) }
+        // Раньше активную вкладку отмечали только жирным шрифтом кнопки - на прошивке магнитолы
+        // это иногда не перерисовывалось (кнопка "залипала" с прошлой подсветкой). Заливка фона
+        // меняется гарантированно, так что это основной признак, а жирный шрифт - дополнительный.
+        tabButtons.forEachIndexed { idx, b ->
+            val sel = idx == i
+            b.setBackgroundColor(if (sel) 0xFF2E7D32.toInt() else 0xFFE0E0E0.toInt())
+            b.setTextColor(if (sel) 0xFFFFFFFF.toInt() else 0xFF000000.toInt())
+            b.setTypeface(null, if (sel) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        }
     }
 
     /** Чтобы Android не прибивал фоновый поток записи при сворачивании приложения (KeepAliveService
