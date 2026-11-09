@@ -68,7 +68,7 @@ class MainActivity : Activity() {
             val b = Homework.banner
             if (b.isEmpty()) bannerView.visibility = android.view.View.GONE else {
                 val left = maxOf(0L, (Homework.stepEndMs - now) / 1000)
-                bannerView.text = "▶ $b\nдо конца этапа: %d:%02d".format(left / 60, left % 60)
+                bannerView.text = "▶ $b\nдо конца этапа: %d:%02d   Задание: %d%%".format(left / 60, left % 60, Homework.progressPct)
                 bannerView.visibility = android.view.View.VISIBLE
             }
             if (GenSession.alertKind.isNotEmpty() && !alertOpen) showGenAlert()

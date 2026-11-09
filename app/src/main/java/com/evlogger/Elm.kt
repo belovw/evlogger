@@ -513,26 +513,41 @@ object Elm {
     }
 
     /** Циклически читает список DID и пишет сырые значения в CSV (для поиска тока/мощности). */
+    /** Монитор известных DID (скан "кто-что"). Параллельно отслеживает, какие DID вообще
+     *  меняют значение за время этапа (changedEver) и какие поменялись именно в последнем
+     *  проходе (changedNow) — это и выводится в scanProgress, чтобы живьём видеть на экране,
+     *  какой DID откликается на нажатие педали, не дожидаясь разбора CSV после поездки. */
     fun watchDids(dir: File, req: String, dids: List<String>) {
         val f = File(dir, "watch_${req}_${stamp()}.csv"); currentFile = f
         scanning = true
+        val prevVals = arrayOfNulls<String>(dids.size)
+        val changedEver = BooleanArray(dids.size)
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n# request=$req\n")
             w.write("time_ms,iso," + dids.joinToString(",") + ",x_coolant_c,x_rpm,x_fuel_pct,x_batt_a,x_soc\n"); w.flush()
             setupAddressing(req, "ATST0F")
             while (scanning && connected) {
                 val vals = ArrayList<String>()
-                for (d in dids) {
+                val changedNow = BooleanArray(dids.size)
+                for ((idx, d) in dids.withIndex()) {
                     if (!scanning) break
                     val p = positive(send("22$d", 800), d)
-                    vals.add(p?.second ?: "")
-                    scanProgress = "мониторинг $req, DID: ${dids.size}"
+                    val v = p?.second ?: ""
+                    vals.add(v)
+                    if (v.isNotEmpty() && prevVals[idx] != null && v != prevVals[idx]) { changedNow[idx] = true; changedEver[idx] = true }
+                    if (v.isNotEmpty()) prevVals[idx] = v
+                    scanProgress = "монитор $req, DID ${idx + 1}/${dids.size} (менялись: ${changedEver.count { it }})"
                 }
                 val ex = extraReadings(req)
                 setupAddressing(req, "ATST0F")
                 val now = System.currentTimeMillis()
                 w.write("$now,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(now))}," + vals.joinToString(",") + "," + ex + "\n")
                 w.flush()
+                // ‼ = поменялся в этом проходе прямо сейчас, · = менялся когда-то за этот этап, без значка = всегда одно и то же
+                val detail = dids.indices.joinToString(" ") { j ->
+                    dids[j] + "=" + (vals.getOrNull(j) ?: "") + (if (changedNow[j]) "‼" else if (changedEver[j]) "·" else "")
+                }
+                scanProgress = "монитор $req, менялись ${changedEver.count { it }}/${dids.size}: $detail"
             }
             restoreAddressing()
         }

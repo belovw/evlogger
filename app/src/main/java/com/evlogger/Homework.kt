@@ -24,6 +24,27 @@ object Homework {
     /** Текущая инструкция на экране (пусто = не показывать) и момент конца шага для обратного отсчёта. */
     @Volatile var banner = ""
     @Volatile var stepEndMs = 0L
+    /** Процент выполнения задания целиком (по сумме длительностей шагов watch/log), для экрана. */
+    @Volatile var progressPct = 0
+    @Volatile private var totalPlannedMs = 0L
+    @Volatile private var doneMs = 0L
+    @Volatile private var curStepStartMs = 0L
+    @Volatile private var curStepPlannedMs = 0L
+    private fun stepSeconds(st: Step): Long = when (st.cmd) {
+        "watch" -> st.args.getOrNull(2)?.toLongOrNull() ?: 0L
+        "log" -> st.args.getOrNull(0)?.toLongOrNull() ?: 0L
+        else -> 0L
+    }
+    private fun fingerprint(steps: List<Step>) = steps.joinToString("|") { it.cmd + ":" + it.args.joinToString(",") }.hashCode().toString()
+    private fun progressTicker() {
+        Thread {
+            while (running) {
+                val cur = if (curStepPlannedMs > 0) minOf(System.currentTimeMillis() - curStepStartMs, curStepPlannedMs) else 0L
+                progressPct = if (totalPlannedMs > 0) (100.0 * (doneMs + cur) / totalPlannedMs).toInt().coerceIn(0, 100) else 0
+                Thread.sleep(500)
+            }
+        }.start()
+    }
 
     private class Step(val cmd: String, val args: List<String>)
 
@@ -105,34 +126,52 @@ object Homework {
             val (steps, src) = try { fetch(act) } catch (e: Exception) { return@Thread act.runOnUiThread { toast("Не удалось прочитать задание") } }
             val title = steps.firstOrNull { it.cmd == "title" }?.args?.firstOrNull() ?: "без описания"
             val need = steps.firstOrNull { it.cmd == "needs" }?.args?.firstOrNull()?.toIntOrNull() ?: 0
+            val pr = act.getSharedPreferences("evlogger", Context.MODE_PRIVATE)
+            val fp = fingerprint(steps)
+            val savedIdx = if (pr.getString("homework_fp", "") == fp) pr.getInt("homework_step", 0) else 0
             act.runOnUiThread {
                 if (build(act) < need) {
                     AlertDialog.Builder(act).setTitle("Нужно обновить приложение")
                         .setMessage("Задание требует версию 0.$need, у вас 0.${build(act)}. Нажми «Обновить приложение».")
                         .setPositiveButton("OK", null).show()
+                } else if (savedIdx in 1 until steps.size) {
+                    AlertDialog.Builder(act).setTitle("Домашнее задание ($src)")
+                        .setMessage("$title\n\nВ прошлый раз остановился на шаге ${savedIdx + 1} из ${steps.size}. Продолжить с того же места или начать сначала?")
+                        .setPositiveButton("Продолжить с шага ${savedIdx + 1}") { _, _ -> Thread { run(act, steps, gps, toast, savedIdx) }.start() }
+                        .setNeutralButton("Начать сначала") { _, _ -> Thread { run(act, steps, gps, toast, 0) }.start() }
+                        .setNegativeButton("Отмена", null).show()
                 } else {
                     AlertDialog.Builder(act).setTitle("Домашнее задание ($src)").setMessage(title + "\n\nНачать?")
-                        .setPositiveButton("Начать") { _, _ -> Thread { run(act, steps, gps, toast) }.start() }
+                        .setPositiveButton("Начать") { _, _ -> Thread { run(act, steps, gps, toast, 0) }.start() }
                         .setNegativeButton("Отмена", null).show()
                 }
             }
         }.start()
     }
 
-    private fun run(act: Activity, steps: List<Step>, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit) {
+    private fun run(act: Activity, steps: List<Step>, gps: () -> Triple<Double, Double, Double>, toast: (String) -> Unit, startIndex: Int = 0) {
         running = true; abort = false
         val dir = act.getExternalFilesDir(null)!!
         val t0 = System.currentTimeMillis()
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val notes = File(dir, "notes_$ts.txt")
         fun note(s: String) { notes.appendText("${SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())} $s\n") }
-        note("homework started, app ${Elm.appVersion}")
+        note("homework started, app ${Elm.appVersion}${if (startIndex > 0) ", продолжение с шага ${startIndex + 1}" else ""}")
+        val pr = act.getSharedPreferences("evlogger", Context.MODE_PRIVATE)
+        val fp = fingerprint(steps)
+        totalPlannedMs = steps.sumOf { stepSeconds(it) } * 1000
+        doneMs = steps.take(startIndex).sumOf { stepSeconds(it) } * 1000
+        progressPct = 0
+        progressTicker()
         try {
             act.startForegroundService(Intent(act, KeepAliveService::class.java))
             try {
             for ((i, st) in steps.withIndex()) {
+                if (i < startIndex) continue
                 if (abort || !Elm.connected) break
                 Elm.scanProgress = "задание: шаг ${i + 1}/${steps.size}"
+                curStepStartMs = System.currentTimeMillis()
+                curStepPlannedMs = stepSeconds(st) * 1000
                 when (st.cmd) {
                     "note" -> {
                         val latch = CountDownLatch(1)
@@ -183,9 +222,13 @@ object Homework {
                         Elm.watchDids(dir, st.args[0].uppercase(), list)
                     }
                 }
+                if (abort || !Elm.connected) break
+                doneMs += stepSeconds(st) * 1000           // шаг прошёл целиком — засчитываем в прогресс
+                pr.edit().putString("homework_fp", fp).putInt("homework_step", i + 1).apply()  // можно продолжить отсюда при следующем запуске
             }
             } catch (e: Exception) { note("step error: ${e.message}"); abort = true; Elm.logging = false; Elm.scanning = false }
-            note("homework finished${if (abort) " (aborted)" else ""}")
+            if (!abort) pr.edit().putInt("homework_step", 0).apply()   // дошли до конца без остановки — следующий запуск начнётся с начала
+            note("homework finished${if (abort) " (aborted, можно продолжить с того же места)" else ""}")
             val zip = File(act.cacheDir, "homework_$ts.zip")
             ZipOutputStream(zip.outputStream()).use { z ->
                 dir.listFiles { f -> f.isFile && f.lastModified() >= t0 - 2000 }?.forEach { f ->
@@ -202,7 +245,7 @@ object Homework {
         } catch (e: Exception) {
             note("error: ${e.message}"); toast("Ошибка задания: ${e.message}")
         } finally {
-            running = false; banner = ""; Elm.scanning = false; Elm.logging = false; Elm.scanProgress = ""
+            running = false; banner = ""; progressPct = 0; Elm.scanning = false; Elm.logging = false; Elm.scanProgress = ""
         }
     }
 }
