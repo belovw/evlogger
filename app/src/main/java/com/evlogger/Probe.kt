@@ -30,7 +30,12 @@ object Probe {
         0x0200 to 0x03FF, 0xF400 to 0xF4FF, 0xF100 to 0xF1FF, 0x0500 to 0x07FF, 0x2000 to 0x20FF,
         0x2200 to 0x29FF, 0xB100 to 0xB1FF, 0xD000 to 0xDFFF)
     private val PRIORITY_ECUS = 12   // сначала первые N блоков по всем диапазонам, потом остальные
-    private class Task(val ecu: Ecu, val from: Int, val to: Int)
+    /** step=1 - подряд, каждый DID. step>1 - редкая разведка (каждый N-й DID): быстро
+     *  проходит весь диапазон 0000-FFFF, а при находке Probe.step() сам вставляет плотную
+     *  подзадачу (шаг 1) вокруг находки - DID почти всегда идут кластерами, так что соседей
+     *  не пропустим, а пустые промежутки между кластерами не тратят время зря. */
+    private class Task(val ecu: Ecu, val from: Int, val to: Int, val step: Int = 1)
+    private const val DENSE_RADIUS = 256
     private val tasks = ArrayList<Task>()
     private var ti = 0; private var did = 0
     private val found = ArrayList<Pair<Ecu, String>>()   // найденные (блок, did)
@@ -95,10 +100,11 @@ object Probe {
                 val p = it.split(" ").filter { x -> x.isNotEmpty() }
                 if (p.size >= 4) {
                     val e = byReq.getOrPut(p[0]) { Ecu(p[0], p[1]).also { x -> ecus.add(x) } }
-                    tasks.add(Task(e, p[2].toInt(16), p[3].toInt(16)))
+                    val step = if (p.size >= 5) p[4].toInt(16) else 1
+                    tasks.add(Task(e, p[2].toInt(16), p[3].toInt(16), step))
                 }
             }
-        val planV = 3
+        val planV = 4
         val pf = File(dir, "probe_progress.txt")
         if (pf.exists()) {            // прогресс в файле переживает сброс настроек приложения при обновлении
             try {
@@ -223,6 +229,14 @@ object Probe {
                             val f = File(dir, "probe_found.csv")
                             if (!f.exists()) f.writeText("time,ecu,did,data\n")
                             f.appendText("${stamp()},${tk.ecu.req},$d,$v\n")
+                            if (tk.step > 1) {
+                                // попали на редком шаге - соседние DID почти наверняка тоже
+                                // существуют (идут кластерами), пробиваем плотно вокруг находки
+                                val lo = maxOf(tk.from, did - DENSE_RADIUS)
+                                val hi = minOf(tk.to, did + DENSE_RADIUS)
+                                tasks.add(ti + 1, Task(tk.ecu, lo, hi, 1))
+                                totalDids += (hi - lo + 1)
+                            }
                         }
                         raws.add("PR ${tk.ecu.req}>${tk.ecu.resp} 22$d: $v")
                     } else neg++
@@ -236,7 +250,7 @@ object Probe {
     }
 
     private fun advance() {
-        did++
+        did += tasks[ti].step
         val tk = tasks[ti]
         if (did > tk.to) { ti = (ti + 1) % tasks.size; did = tasks[ti].from }
     }
