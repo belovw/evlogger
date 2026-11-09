@@ -104,7 +104,7 @@ object Probe {
                     tasks.add(Task(e, p[2].toInt(16), p[3].toInt(16), step))
                 }
             }
-        val planV = 4
+        val planV = 5
         val pf = File(dir, "probe_progress.txt")
         if (pf.exists()) {            // прогресс в файле переживает сброс настроек приложения при обновлении
             try {
@@ -189,8 +189,8 @@ object Probe {
         if (lastStepMs != 0L && t0 - lastStepMs < 15000) activeMs += t0 - lastStepMs
         lastStepMs = t0
         var n = 0
-        val maxN = if (dedicated) 25 else if (gen) 1 else 2
-        val budgetMs = if (dedicated) 4000L else 450L
+        val maxN = if (dedicated) 12 else if (gen) 1 else 2
+        val budgetMs = if (dedicated) 2500L else 450L
         while (n < maxN && System.currentTimeMillis() - t0 < budgetMs && Elm.logging) {
             n++; slot++
             if (slot % 4 == 0 && found.isNotEmpty()) {            // перечитываем найденный DID (каждый 4-й запрос, остальные идут на разведку)
