@@ -119,7 +119,10 @@ object Probe {
         }
         ti = pr().getInt("probe_task", 0).coerceIn(0, maxOf(0, tasks.size - 1))
         did = pr().getInt("probe_did", tasks.getOrNull(ti)?.from ?: 0)
-        totalDids = tasks.sumOf { it.to - it.from + 1 }
+        // "to-from+1" без учёта step давало дикое переоценённое число (например ~2.1 млн вместо
+        // реальных ~5 тыс. запросов для 33 редких задач с шагом 0x200) - процент прогресса почти
+        // не двигался и выглядел как "не видно индикации". Правильный счёт - число шагов по задаче.
+        totalDids = tasks.sumOf { (it.to - it.from) / it.step + 1 }
         activeMs = pr().getLong("probe_ms", 0L)
         tot = pr().getInt("probe_tot", 0); pos = pr().getInt("probe_pos", 0); neg = pr().getInt("probe_neg", 0)
         val constKeys = HashSet<String>()
