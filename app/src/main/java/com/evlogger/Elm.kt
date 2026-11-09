@@ -250,7 +250,6 @@ object Elm {
                     w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},$a,\"$rawCell\"\n")
                     w.flush()
                     lastValues = vals
-                    try { Ledger.tick(vals, now) } catch (_: Exception) {}
                     if (vals.values.any { it.isNotEmpty() }) {
                         lastDataMs = now
                     } else if (now - lastDataMs > STALE_DISCONNECT_MS) {
