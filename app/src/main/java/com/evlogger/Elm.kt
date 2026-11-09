@@ -565,19 +565,22 @@ object Elm {
         scanning = true
         val prevVals = arrayOfNulls<String>(dids.size)
         val changedEver = BooleanArray(dids.size)
+        // Держим "‼" несколько секунд после изменения, а не один проход - иначе при обновлении
+        // экрана раз в секунду пользователь физически не успевает заметить мгновенную вспышку.
+        val lastChangeMs = LongArray(dids.size)
+        val FLASH_MS = 3000L
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n# request=$req\n")
             w.write("time_ms,iso," + dids.joinToString(",") + ",x_coolant_c,x_rpm,x_fuel_pct,x_batt_a,x_soc\n"); w.flush()
             setupAddressing(req, "ATST0F")
             while (scanning && connected) {
                 val vals = ArrayList<String>()
-                val changedNow = BooleanArray(dids.size)
                 for ((idx, d) in dids.withIndex()) {
                     if (!scanning) break
                     val p = positive(send("22$d", 800), d)
                     val v = p?.second ?: ""
                     vals.add(v)
-                    if (v.isNotEmpty() && prevVals[idx] != null && v != prevVals[idx]) { changedNow[idx] = true; changedEver[idx] = true }
+                    if (v.isNotEmpty() && prevVals[idx] != null && v != prevVals[idx]) { lastChangeMs[idx] = System.currentTimeMillis(); changedEver[idx] = true }
                     if (v.isNotEmpty()) prevVals[idx] = v
                     scanProgress = "монитор $req, DID ${idx + 1}/${dids.size} (менялись: ${changedEver.count { it }})"
                 }
@@ -586,9 +589,9 @@ object Elm {
                 val now = System.currentTimeMillis()
                 w.write("$now,${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(now))}," + vals.joinToString(",") + "," + ex + "\n")
                 w.flush()
-                // ‼ = поменялся в этом проходе прямо сейчас, · = менялся когда-то за этот этап, без значка = всегда одно и то же
+                // ‼ = менялся последние 3 сек (видно глазом), · = менялся раньше в этом этапе, без значка = всегда одно и то же
                 val detail = dids.indices.joinToString(" ") { j ->
-                    dids[j] + "=" + (vals.getOrNull(j) ?: "") + (if (changedNow[j]) "‼" else if (changedEver[j]) "·" else "")
+                    dids[j] + "=" + (vals.getOrNull(j) ?: "") + (if (changedEver[j] && now - lastChangeMs[j] < FLASH_MS) "‼" else if (changedEver[j]) "·" else "")
                 }
                 scanProgress = "монитор $req, менялись ${changedEver.count { it }}/${dids.size}: $detail"
             }
