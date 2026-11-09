@@ -171,13 +171,13 @@ object Elm {
     }
 
     /** Запуск обычной записи лога в фоне (после подключения и после сессий). */
-    fun startAutoLog(ctx: android.content.Context, dir: File, gps: () -> Triple<Double, Double, Double>) {
+    fun startAutoLog(ctx: android.content.Context, dir: File, gps: () -> Triple<Double, Double, Double>, alt: () -> Double = { 0.0 }) {
         if (logging || !connected) return
         try {
             val custom = File(dir, "pids.txt")
             val list = loadPids(if (custom.exists()) custom.readText() else ctx.assets.open("pids.txt").bufferedReader().readText())
             autoLog = true
-            Thread { logLoop(dir, list, gps) }.start()
+            Thread { logLoop(dir, list, gps, alt) }.start()
         } catch (_: Exception) { autoLog = false }
     }
 
@@ -196,7 +196,7 @@ object Elm {
      *  Обёрнут в try/finally: если что-то бросит исключение (обрыв BT, ошибка записи файла
      *  и т.п.), logging и connected всё равно корректно сбросятся, а не останутся "висеть"
      *  в состоянии "подключено"/"идёт запись" навечно. */
-    fun logLoop(dir: File, pids: List<Pid>, gps: () -> Triple<Double, Double, Double>) {
+    fun logLoop(dir: File, pids: List<Pid>, gps: () -> Triple<Double, Double, Double>, alt: () -> Double = { 0.0 }) {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val f = File(dir, "log_$stamp.csv")
         currentFile = f
@@ -207,7 +207,7 @@ object Elm {
             f.bufferedWriter().use { w ->
                 w.write("# app version: $appVersion\n")
                 initLog.lines().filter { it.isNotBlank() }.forEach { w.write("# $it\n") }
-                w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,raw\n")
+                w.write("time_ms,iso," + pids.joinToString(",") { it.name } + ",gps_lat,gps_lon,gps_speed_kmh,gps_alt_m,raw\n")
                 w.flush()
                 send("ATSH7DF"); send("ATAR")
                 curHeader = ""
@@ -237,10 +237,11 @@ object Elm {
                     if (!connected) break // send() уже обнаружил реальный обрыв и сам закрыл сессию
                     try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
                     val g = gps()
+                    val a = try { alt() } catch (_: Exception) { 0.0 }
                     val now = System.currentTimeMillis()
                     w.write("$now,${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(Date(now))},")
                     val rawCell = raws.joinToString(" ## ").replace("\"", "'")
-                    w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},\"$rawCell\"\n")
+                    w.write(vals.values.joinToString(",") + ",${g.first},${g.second},${g.third},$a,\"$rawCell\"\n")
                     w.flush()
                     lastValues = vals
                     try { Ledger.tick(vals, now) } catch (_: Exception) {}

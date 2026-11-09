@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     @Volatile private var gpsLat = 0.0
     @Volatile private var gpsLon = 0.0
     @Volatile private var gpsSpeed = 0.0
+    @Volatile private var gpsAlt = 0.0 // высота над уровнем моря по GPS, метры (для оценки продольного наклона дороги)
     @Volatile private var gpsMs = 0L
 
     private val refresh = object : Runnable {
@@ -402,6 +403,7 @@ class MainActivity : Activity() {
         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, object : LocationListener {
             override fun onLocationChanged(l: Location) {
                 gpsLat = l.latitude; gpsLon = l.longitude; gpsSpeed = l.speed * 3.6; gpsMs = System.currentTimeMillis()
+                if (l.hasAltitude()) gpsAlt = l.altitude
             }
         })
     }
@@ -416,7 +418,7 @@ class MainActivity : Activity() {
                 getSharedPreferences("evlogger", Context.MODE_PRIVATE).edit().putString("last_mac", d.address).apply()
                 if (Elm.connected && !Elm.logging) runOnUiThread {
                     startForegroundService(Intent(this, KeepAliveService::class.java))
-                    Elm.startAutoLog(this, getExternalFilesDir(null)!!) { Triple(gpsLat, gpsLon, gpsSpeed) }
+                    Elm.startAutoLog(this, getExternalFilesDir(null)!!, { Triple(gpsLat, gpsLon, gpsSpeed) }, { gpsAlt })
                 }
             } catch (e: Exception) { Elm.status = "ошибка: ${e.message}" }
             Elm.connecting = false
@@ -430,7 +432,7 @@ class MainActivity : Activity() {
         val pids = Elm.loadPids(assets.open("pids.txt").bufferedReader().readText())
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
         val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
-        Thread { Elm.logLoop(getExternalFilesDir(null)!!, list) { Triple(gpsLat, gpsLon, gpsSpeed) } }.start()
+        Thread { Elm.logLoop(getExternalFilesDir(null)!!, list, { Triple(gpsLat, gpsLon, gpsSpeed) }, { gpsAlt }) }.start()
     }
 
     private fun shareGenReport(dir: java.io.File) {
