@@ -275,9 +275,11 @@ object Elm {
      *  известные PID вообще не трогаем, а Probe.step() вызывается почти без паузы между
      *  вызовами и с расширенным бюджетом (Probe.dedicated=true) — поиск новых DID идёт быстрее.
      *  Прогресс/статус виден в той же строке "Разведка DID: ..." на главном экране. */
+    @Volatile var probeOnlyActive = false
     fun probeOnlyLoop(dir: File) {
         logging = true
         loggingActive = true
+        probeOnlyActive = true
         lastDataMs = System.currentTimeMillis()
         Probe.dedicated = true
         try {
@@ -302,6 +304,7 @@ object Elm {
             logging = false
             abortNow = false
             loggingActive = false
+            probeOnlyActive = false
         }
     }
 

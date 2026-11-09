@@ -86,16 +86,16 @@ class MainActivity : Activity() {
                 if (GenSession.status.isNotEmpty()) append("${GenSession.status}\n")
                 if (TripTest.status.isNotEmpty()) append("${TripTest.status}\n")
                 if (ChargeSession.status.isNotEmpty()) append("${ChargeSession.status}\n")
-                if (Elm.logging) append("${Ledger.status()}\n")
+                if (Elm.logging && !Elm.probeOnlyActive) append("${Ledger.status()}\n")
                 if (GenSession.precision.isNotEmpty()) append("${GenSession.precision}\n")
                 if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append("${Probe.status}\n")
                 append("Статус: ${Elm.status}\n")
-                append("Запись: ${if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
+                append("Запись: ${if (Elm.probeOnlyActive) "нет (идёт только разведка DID)" else if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
                 if (Elm.scanning || Elm.scanProgress.isNotEmpty()) append("Сканер: ${Elm.scanProgress}\n")
                 val age = (now - Elm.lastDataMs) / 1000
-                if (v.isNotEmpty() && Elm.logging && age <= 6) v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
-                else if (v.isNotEmpty()) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
+                if (v.isNotEmpty() && Elm.logging && !Elm.probeOnlyActive && age <= 6) v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
+                else if (v.isNotEmpty() && !Elm.probeOnlyActive) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
                 if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
                 append("gps_speed = %.1f км/ч   gps_alt = %.0f м".format(gpsSpeed, gpsAlt))
             }
