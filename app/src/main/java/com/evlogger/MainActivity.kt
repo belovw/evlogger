@@ -160,6 +160,7 @@ class MainActivity : Activity() {
         btn("📤 Отправить всё и очистить") { sendAll() }
 
         title("ПРИЛОЖЕНИЕ")
+        btn("🔋 Разрешить работу в фоне (если запись слетает после сворачивания)") { requestIgnoreBatteryOptimizations() }
         btn("Обновить приложение") { updateApp() }
 
         // --- Инструменты (свёрнуто) ---
@@ -224,9 +225,31 @@ class MainActivity : Activity() {
 
         GenSession.refreshPrecision(this, getExternalFilesDir(null)!!)
         askPermissions()
+        requestIgnoreBatteryOptimizations()
         loadDevices()
         startGps()
         ui.post(refresh)
+    }
+
+    /** Чтобы Android не прибивал фоновый поток записи при сворачивании приложения (KeepAliveService
+     *  формально foreground, но системная оптимизация батареи всё равно может душить процесс —
+     *  особенно на урезанных прошивках автомагнитол). Показывает системный диалог "не оптимизировать
+     *  батарею для этого приложения"; если производитель диалог игнорирует — своей настройки у него
+     *  может не быть вовсе, тогда нужно искать "автозапуск"/"фоновая работа" в системных настройках ОС. */
+    @SuppressLint("BatteryLife")
+    private fun requestIgnoreBatteryOptimizations() {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm.isIgnoringBatteryOptimizations(packageName)) {
+            toast("Уже разрешено: приложение не подчиняется оптимизации батареи")
+            return
+        }
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = android.net.Uri.parse("package:$packageName")
+            })
+        } catch (e: Exception) {
+            toast("Не удалось открыть системный диалог: ${e.message}. Ищи вручную в настройках ОС: автозапуск / фоновая работа / защищённые приложения.")
+        }
     }
 
     private fun askPermissions() {

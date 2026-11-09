@@ -21,8 +21,9 @@ class KeepAliveService : Service() {
         nm.createNotificationChannel(NotificationChannel("log", "Запись лога", NotificationManager.IMPORTANCE_LOW))
         val n = Notification.Builder(this, "log")
             .setContentTitle("EV Logger")
-            .setContentText("Идёт запись данных с автомобиля")
+            .setContentText("Идёт запись данных с автомобиля — не сворачивать через «закрыть все»")
             .setSmallIcon(android.R.drawable.ic_menu_save)
+            .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
