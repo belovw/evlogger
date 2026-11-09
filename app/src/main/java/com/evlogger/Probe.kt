@@ -15,6 +15,12 @@ import java.util.Locale
 object Probe {
     @Volatile var on = true
     @Volatile var status = ""
+    /** true во время Elm.probeOnlyLoop (разведка без опроса известных PID) — тогда можно
+     *  брать на себя куда больший бюджет за один вызов step(), т.к. больше ничего не ждёт своей очереди. */
+    @Volatile var dedicated = false
+    /** Время последнего запроса (любого — даже отказа), чтобы probeOnlyLoop мог отличить
+     *  "адаптер жив, просто редко находит новые DID" от настоящего обрыва связи. */
+    @Volatile var lastQueryMs = 0L
     private lateinit var appCtx: Context
     private class Ecu(val req: String, val resp: String)
     private val ecus = ArrayList<Ecu>()
@@ -148,6 +154,7 @@ object Probe {
 
     /** Один запрос. Возвращает данные при положительном ответе, "" при отказе/нет данных, null при ошибке шины. */
     private fun query(e: Ecu, d: String): String? {
+        lastQueryMs = System.currentTimeMillis()
         addr(e)
         val r = Elm.send("22$d", 800)
         val u = clean(r)
@@ -176,8 +183,9 @@ object Probe {
         if (lastStepMs != 0L && t0 - lastStepMs < 15000) activeMs += t0 - lastStepMs
         lastStepMs = t0
         var n = 0
-        val maxN = if (gen) 1 else 2
-        while (n < maxN && System.currentTimeMillis() - t0 < 450 && Elm.logging) {
+        val maxN = if (dedicated) 25 else if (gen) 1 else 2
+        val budgetMs = if (dedicated) 4000L else 450L
+        while (n < maxN && System.currentTimeMillis() - t0 < budgetMs && Elm.logging) {
             n++; slot++
             if (slot % 4 == 0 && found.isNotEmpty()) {            // перечитываем найденный DID (каждый 4-й запрос, остальные идут на разведку)
                 ri = (ri + 1) % found.size

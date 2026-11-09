@@ -269,6 +269,38 @@ object Elm {
         }
     }
 
+    /** Разведка DID без опроса известных PID и без основного CSV-лога.
+     *  Обычный logLoop тратит большую часть каждого цикла на опрос уже известных параметров
+     *  (20-40 PID), и только потом даёт Probe.step() его стандартные ~450мс/2 запроса. Здесь
+     *  известные PID вообще не трогаем, а Probe.step() вызывается почти без паузы между
+     *  вызовами и с расширенным бюджетом (Probe.dedicated=true) — поиск новых DID идёт быстрее.
+     *  Прогресс/статус виден в той же строке "Разведка DID: ..." на главном экране. */
+    fun probeOnlyLoop(dir: File) {
+        logging = true
+        loggingActive = true
+        lastDataMs = System.currentTimeMillis()
+        Probe.dedicated = true
+        try {
+            send("ATSH7DF"); send("ATAR")
+            curHeader = ""
+            while (logging && connected) {
+                Probe.step(dir, ArrayList())
+                val now = System.currentTimeMillis()
+                // lastQueryMs двигается на каждый запрос (даже отказ) - это живой признак связи,
+                // в отличие от "найден новый DID", что бывает редко и само по себе ничего не значит.
+                if (Probe.lastQueryMs > lastDataMs) lastDataMs = Probe.lastQueryMs
+                if (now - lastDataMs > STALE_DISCONNECT_MS) close()
+            }
+        } catch (e: Exception) {
+            close()
+        } finally {
+            Probe.dedicated = false
+            logging = false
+            abortNow = false
+            loggingActive = false
+        }
+    }
+
     /** Дождаться, пока фоновый поток записи реально закроет файл (не дольше timeoutMs).
      *  Вызывать из UI после "Стоп", прежде чем паковать/отправлять/удалять логи. */
     fun awaitStopped(timeoutMs: Long = 8000) {

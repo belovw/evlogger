@@ -209,6 +209,7 @@ class MainActivity : Activity() {
         btn("Обзор всех блоков (диапазон и шаг из полей)") { startSurvey() }
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
+        btn("🚀 Только разведка DID (без лога известных PID, быстрее): старт") { startProbeOnly() }
         cmdBox = EditText(this).apply { hint = "Команда ELM327, например ATRV или 22F190"; isSingleLine = true }
         tools.addView(cmdBox)
         btn("Отправить команду") { sendCmd() }
@@ -618,6 +619,14 @@ class MainActivity : Activity() {
         if (list.isEmpty()) return toast("Нет DID: сначала скан или впиши вручную")
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Thread { Elm.watchDids(getExternalFilesDir(null)!!, h, list) }.start()
+    }
+
+    private fun startProbeOnly() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        if (!Probe.on) return toast("Сначала включи «Фоновая разведка DID» выше")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.probeOnlyLoop(getExternalFilesDir(null)!!) }.start()
     }
 
     private fun startMonitor() {
