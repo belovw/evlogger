@@ -97,7 +97,7 @@ class MainActivity : Activity() {
                 if (v.isNotEmpty() && Elm.logging && age <= 6) v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
                 else if (v.isNotEmpty()) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
                 if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
-                append("gps_speed = %.1f км/ч".format(gpsSpeed))
+                append("gps_speed = %.1f км/ч   gps_alt = %.0f м".format(gpsSpeed, gpsAlt))
             }
             ui.postDelayed(this, 1000)
         }
