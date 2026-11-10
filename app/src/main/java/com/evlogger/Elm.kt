@@ -369,11 +369,27 @@ object Elm {
         scanning = false; scanProgress = ""
     }
 
-    /** Перебор DID. Пишет в файл только найденные (положительные ответы 62 xx xx ...). */
+    /** Перебор DID. Пишет в файл только найденные (положительные ответы 62 xx xx ...).
+     *  При редком шаге (step>1) находка - это сигнал, что рядом (в пределах шага) наверняка есть
+     *  ещё DID (они обычно идут кластерами): сразу же, не дожидаясь конца всего прохода, плотно
+     *  добивает ±DENSE_RADIUS вокруг находки (шаг 1) - та же идея, что и в фоновой разведке Probe. */
     fun scanDids(dir: File, req: String, from: Int, to: Int, step: Int = 1) {
+        val DENSE_RADIUS = 256
         val f = File(dir, "scan_${req}_${stamp()}.txt"); currentFile = f
         scanning = true; found.clear()
         var pos = 0; var neg = 0; var none = 0
+        fun checkOne(dd: Int, w: java.io.BufferedWriter, dense: Boolean) {
+            val d = "%04X".format(dd)
+            val r = send("22$d", 800)
+            scanProgress = "$req $d  найдено $pos, отказов $neg, без ответа $none" + (if (dense) " (плотно вокруг находки)" else "")
+            if (positive(r, d) != null) {
+                pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
+            } else if (clean(r).contains("7F22")) {
+                neg++
+                val code = clean(r).substringAfter("7F22", "").take(2)
+                if (code != "31" && code != "11" && code != "12") { w.write("# NEG $d 7F22$code\n"); w.flush() }
+            } else none++
+        }
         f.bufferedWriter().use { w ->
             w.write("# app version: $appVersion\n# scan request=$req DID %04X..%04X step=$step\n".format(from, to))
             setupAddressing(req)
@@ -384,6 +400,16 @@ object Elm {
                 scanProgress = "$req $d  найдено $pos, отказов $neg, без ответа $none"
                 if (positive(r, d) != null) {
                     pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
+                    if (step > 1) {
+                        val lo = maxOf(from, did - DENSE_RADIUS)
+                        val hi = minOf(to, did + DENSE_RADIUS)
+                        w.write("# плотно вокруг находки $d: %04X..%04X\n".format(lo, hi)); w.flush()
+                        for (dd in lo..hi) {
+                            if (dd == did) continue
+                            if (!scanning || !connected) break
+                            checkOne(dd, w, true)
+                        }
+                    }
                 } else if (clean(r).contains("7F22")) {
                     neg++
                     val code = clean(r).substringAfter("7F22", "").take(2)
