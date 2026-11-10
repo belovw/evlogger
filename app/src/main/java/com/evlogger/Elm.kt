@@ -374,7 +374,8 @@ object Elm {
      *  ещё DID (они обычно идут кластерами): сразу же, не дожидаясь конца всего прохода, плотно
      *  добивает ±DENSE_RADIUS вокруг находки (шаг 1) - та же идея, что и в фоновой разведке Probe. */
     fun scanDids(dir: File, req: String, from: Int, to: Int, step: Int = 1) {
-        val DENSE_RADIUS = 256
+        val DENSE_BACK = 256   // то же соотношение, что и в Probe.kt: назад меньше, вперёд больше
+        val DENSE_FWD = 512
         val f = File(dir, "scan_${req}_${stamp()}.txt"); currentFile = f
         scanning = true; found.clear()
         var pos = 0; var neg = 0; var none = 0
@@ -401,8 +402,8 @@ object Elm {
                 if (positive(r, d) != null) {
                     pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
                     if (step > 1) {
-                        val lo = maxOf(from, did - DENSE_RADIUS)
-                        val hi = minOf(to, did + DENSE_RADIUS)
+                        val lo = maxOf(from, did - DENSE_BACK)
+                        val hi = minOf(to, did + DENSE_FWD)
                         w.write("# плотно вокруг находки $d: %04X..%04X\n".format(lo, hi)); w.flush()
                         for (dd in lo..hi) {
                             if (dd == did) continue

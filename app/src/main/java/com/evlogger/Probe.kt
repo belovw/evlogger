@@ -35,7 +35,12 @@ object Probe {
      *  подзадачу (шаг 1) вокруг находки - DID почти всегда идут кластерами, так что соседей
      *  не пропустим, а пустые промежутки между кластерами не тратят время зря. */
     private class Task(val ecu: Ecu, val from: Int, val to: Int, val step: Int = 1)
-    private const val DENSE_RADIUS = 256
+    // Несимметрично: назад меньше, вперёд больше. Находка на редкой сетке не обязательно -
+    // начало кластера, но часто оказывается близко к нему (кластеры у производителя нередко
+    // начинаются на круглых DID, которые как раз чаще попадают в сетку) - поэтому вперёд стоит
+    // смотреть дальше, чем назад.
+    private const val DENSE_BACK = 256
+    private const val DENSE_FWD = 512
     private val tasks = ArrayList<Task>()
     private var ti = 0; private var did = 0
     private val found = ArrayList<Pair<Ecu, String>>()   // найденные (блок, did)
@@ -233,8 +238,8 @@ object Probe {
                             if (tk.step > 1) {
                                 // попали на редком шаге - соседние DID почти наверняка тоже
                                 // существуют (идут кластерами), пробиваем плотно вокруг находки
-                                val lo = maxOf(tk.from, did - DENSE_RADIUS)
-                                val hi = minOf(tk.to, did + DENSE_RADIUS)
+                                val lo = maxOf(tk.from, did - DENSE_BACK)
+                                val hi = minOf(tk.to, did + DENSE_FWD)
                                 tasks.add(ti + 1, Task(tk.ecu, lo, hi, 1))
                                 totalDids += (hi - lo + 1)
                             }
