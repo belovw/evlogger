@@ -109,7 +109,7 @@ object Probe {
                     tasks.add(Task(e, p[2].toInt(16), p[3].toInt(16), step))
                 }
             }
-        val planV = 7
+        val planV = 8
         val pf = File(dir, "probe_progress.txt")
         if (pf.exists()) {            // прогресс в файле переживает сброс настроек приложения при обновлении
             try {
