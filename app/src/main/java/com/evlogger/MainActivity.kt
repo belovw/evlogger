@@ -504,8 +504,12 @@ class MainActivity : Activity() {
         startForegroundService(Intent(this, KeepAliveService::class.java))
         Elm.scanQueueAbort = false
         Thread {
-            for (h in blocks) {
+            for ((i, h) in blocks.withIndex()) {
                 if (Elm.scanQueueAbort || !Elm.connected) break
+                // Небольшая пауза перед каждым следующим блоком: смена заголовка (ATSH/ATCRA) и так
+                // ждёт ответа на каждую AT-команду, но резкая смена заголовков между блоками была
+                // одной из вероятных причин обрывов связи с дешёвым клоном V-LINK - лучше перестраховаться.
+                if (i > 0) Thread.sleep(300)
                 Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st)
             }
         }.start()
