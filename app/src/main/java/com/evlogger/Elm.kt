@@ -318,6 +318,10 @@ object Elm {
     // ---------- Mode 22 (UDS ReadDataByIdentifier): ТОЛЬКО ЧТЕНИЕ ----------
     @Volatile var scanning = false
     @Volatile var scanProgress = ""
+    // scanning=false сам сбрасывается после КАЖДОГО блока в очереди (startScan из MainActivity
+    // может сканировать несколько адресов подряд) - этот флаг отдельно говорит "брось всю очередь",
+    // а не только текущий блок, иначе "■ СТОП" останавливал бы лишь один блок и шёл дальше к следующему.
+    @Volatile var scanQueueAbort = false
     val found: MutableList<String> = java.util.Collections.synchronizedList(ArrayList<String>())
 
     private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())

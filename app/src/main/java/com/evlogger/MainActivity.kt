@@ -147,7 +147,7 @@ class MainActivity : Activity() {
         fun field(hintText: String, def: String) = EditText(this).apply {
             hint = hintText; setText(def); isSingleLine = true; target.addView(this)
         }
-        hdrBox = field("Адрес запроса: 7DF = всем блокам (рекомендуется)", "7DF")
+        hdrBox = field("Адрес запроса: один (7E0) или список через пробел (703 732 744 765); 7DF = всем блокам", "7DF")
         fromBox = field("DID с (hex)", "0000")
         toBox = field("DID по (hex)", "FFFF")
         stepBox = field("Шаг перебора (1 = каждый DID, 16 = каждый 16-й)", "1")
@@ -442,6 +442,7 @@ class MainActivity : Activity() {
         Elm.logging = false
         Elm.monitoring = false
         Elm.scanning = false
+        Elm.scanQueueAbort = true // не даёт перейти к следующему блоку в очереди "Сканер Mode 22"
         Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
         toast("Останавливаю…")
         Thread {
@@ -490,14 +491,24 @@ class MainActivity : Activity() {
     private fun startScan() {
         if (!Elm.connected) return toast("Сначала подключись")
         if (busy()) return toast("Останови текущую запись или сканер")
-        val h = hdrBox.text.toString().trim().uppercase()
+        // можно перечислить несколько адресов через пробел/запятую (например "703 732 744 765") -
+        // тогда блоки сканируются по очереди одним запуском, без ручной смены адреса между ними
+        val blocks = hdrBox.text.toString().trim().uppercase().split(Regex("[\\s,]+"))
+            .filter { it.isNotEmpty() }
+        if (blocks.isEmpty() || blocks.any { it.toIntOrNull(16) == null }) return toast("Проверь адрес(а) (hex, через пробел)")
         val a = fromBox.text.toString().trim().toIntOrNull(16)
         val b = toBox.text.toString().trim().toIntOrNull(16)
-        if (h.toIntOrNull(16) == null || a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь адрес и диапазон (hex)")
-        startForegroundService(Intent(this, KeepAliveService::class.java))
+        if (a == null || b == null || a > b || b > 0xFFFF) return toast("Проверь диапазон (hex)")
         val st = stepBox.text.toString().trim().toIntOrNull() ?: 1
         if (st < 1 || st > 4096) return toast("Шаг от 1 до 4096")
-        Thread { Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st) }.start()
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Elm.scanQueueAbort = false
+        Thread {
+            for (h in blocks) {
+                if (Elm.scanQueueAbort || !Elm.connected) break
+                Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st)
+            }
+        }.start()
     }
 
     private fun startWatch() {
