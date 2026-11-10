@@ -379,12 +379,28 @@ object Elm {
         val f = File(dir, "scan_${req}_${stamp()}.txt"); currentFile = f
         scanning = true; found.clear()
         var pos = 0; var neg = 0; var none = 0
+        // Раньше ручной сканер писал находки только в свой собственный scan_*.txt - фоновая
+        // разведка (Probe) про них не знала и позже сама же тратила время на повторный опрос тех
+        // же самых DID. Теперь пишем находки и сюда, в общий probe_found.csv (с проверкой на
+        // дубли) - Probe при следующей загрузке подхватит их и пропустит при обходе диапазона.
+        val foundCsv = File(dir, "probe_found.csv")
+        val known = HashSet<String>()
+        if (foundCsv.exists()) foundCsv.readLines().drop(1).forEach { l ->
+            val c = l.split(","); if (c.size >= 4 && c[1] == req) known.add(c[2])
+        }
+        fun recordFound(d: String, value: String) {
+            if (known.add(d)) {
+                if (!foundCsv.exists()) foundCsv.writeText("time,ecu,did,data\n")
+                foundCsv.appendText("${stamp()},$req,$d,$value\n")
+            }
+        }
         fun checkOne(dd: Int, w: java.io.BufferedWriter, dense: Boolean) {
             val d = "%04X".format(dd)
             val r = send("22$d", 800)
             scanProgress = "$req $d  найдено $pos, отказов $neg, без ответа $none" + (if (dense) " (плотно вокруг находки)" else "")
-            if (positive(r, d) != null) {
-                pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
+            val p = positive(r, d)
+            if (p != null) {
+                pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d); recordFound(d, p.second)
             } else if (clean(r).contains("7F22")) {
                 neg++
                 val code = clean(r).substringAfter("7F22", "").take(2)
@@ -399,8 +415,9 @@ object Elm {
                 val d = "%04X".format(did)
                 val r = send("22$d", 800)
                 scanProgress = "$req $d  найдено $pos, отказов $neg, без ответа $none"
-                if (positive(r, d) != null) {
-                    pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d)
+                val p = positive(r, d)
+                if (p != null) {
+                    pos++; w.write("$d ${r.replace("\n", " | ")}\n"); w.flush(); found.add(d); recordFound(d, p.second)
                     if (step > 1) {
                         val lo = maxOf(from, did - DENSE_BACK)
                         val hi = minOf(to, did + DENSE_FWD)

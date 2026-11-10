@@ -224,6 +224,10 @@ object Probe {
                 if (tk.ecu.req in muted) { advance(); continue }
                 val d = "%04X".format(did)
                 val key = tk.ecu.req + d
+                // Уже найден раньше (этой же фоновой разведкой, или вручную через "Сканер Mode 22" -
+                // он теперь тоже пишет в probe_found.csv) - нет смысла опрашивать по новой, это
+                // реальный эфирный запрос. Просто перескакиваем, не тратя n из бюджета этого вызова.
+                if (key in foundSet) { advance(); n--; continue }
                 val v = query(tk.ecu, d)
                 tot++
                 if (v == null) { /* ошибка шины: повторим позже */ }
