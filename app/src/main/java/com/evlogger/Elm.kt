@@ -242,6 +242,7 @@ object Elm {
                     }
                     if (!connected) break // send() уже обнаружил реальный обрыв и сам закрыл сессию
                     try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
+                    try { if (logging) recheckLoopStep() } catch (_: Exception) {}
                     val g = gps()
                     val a = try { alt() } catch (_: Exception) { 0.0 }
                     val now = System.currentTimeMillis()
@@ -439,6 +440,50 @@ object Elm {
             restoreAddressing()
         }
         scanning = false
+    }
+
+    // ---------- Непрерывная проверка всех найденных DID по кругу (во время обычного лога) ----------
+    @Volatile var recheckLoopOn = false
+    @Volatile var recheckStatus = ""
+    private var recheckList: List<Pair<String, String>> = emptyList()
+    private var recheckIdx = 0
+    private var recheckCsv: File? = null
+
+    /** Вкл/выкл непрерывную фоновую проверку всех уже найденных DID по кругу - как Probe.step(),
+     *  но не ищет новое, а раз за разом опрашивает уже известные, с таймстемпом каждого ответа.
+     *  Удобно смотреть прямо во время поездки, кто отвечает/молчит в динамике (скорость, режим ДВС,
+     *  заряд и т.п.), без повторных нажатий кнопки. */
+    fun recheckLoopToggle(dir: File, on: Boolean) {
+        recheckLoopOn = on
+        if (!on) { recheckStatus = ""; return }
+        val foundCsv = File(dir, "probe_found.csv")
+        val rows = LinkedHashMap<String, Pair<String, String>>()
+        if (foundCsv.exists()) foundCsv.readLines().drop(1).forEach { l ->
+            val c = l.split(",")
+            if (c.size >= 4) rows["${c[1]}|${c[2]}"] = c[1] to c[2]
+        }
+        recheckList = rows.values.toList()
+        recheckIdx = 0
+        val f = File(dir, "recheck_live_${stamp()}.csv")
+        f.writeText("time,ecu,did,now,ok\n")
+        recheckCsv = f
+    }
+
+    /** Вызывается раз в цикл logLoop (как Probe.step) - один запрос по кругу всех найденных DID.
+     *  Переключает заголовок через curHeader так же, как это делает Probe - следующий PID обычного
+     *  лога сам заметит разницу и переключится обратно, без явного "восстановления" здесь. */
+    fun recheckLoopStep() {
+        if (!recheckLoopOn || recheckList.isEmpty()) return
+        val (ecu, did) = recheckList[recheckIdx]
+        recheckIdx = (recheckIdx + 1) % recheckList.size
+        val key = "$ecu>${respAddr(ecu)}"
+        if (curHeader != key) { send("ATSH$ecu"); send("ATCRA${respAddr(ecu)}"); curHeader = key }
+        val r = send("22$did", 800)
+        val p = positive(r, did)
+        val now = p?.second ?: ""
+        val ok = p != null
+        recheckCsv?.appendText("${stamp()},$ecu,$did,$now,$ok\n")
+        recheckStatus = "Непрерывная проверка: $ecu $did " + (if (ok) "жив" else "молчит") + " ($recheckIdx/${recheckList.size})"
     }
 
     /** Повторный опрос ВСЕХ уже найденных DID (из probe_found.csv), по блокам, один раз каждый -

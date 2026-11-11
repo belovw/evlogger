@@ -29,6 +29,7 @@ import androidx.core.content.FileProvider
 class MainActivity : Activity() {
     private lateinit var spinner: Spinner
     private lateinit var probeBtn: Button
+    private lateinit var recheckLoopBtn: Button
     private lateinit var info: TextView
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
@@ -91,6 +92,7 @@ class MainActivity : Activity() {
             val sText = buildString {
                 if (Elm.scanning || Elm.scanProgress.isNotEmpty()) append("Сканер: ${Elm.scanProgress}\n")
                 if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append(Probe.status)
+                if (Elm.recheckLoopOn && Elm.logging && Elm.recheckStatus.isNotEmpty()) append(Elm.recheckStatus + "\n")
             }
             if (sText.isEmpty()) { searchStatus.visibility = android.view.View.GONE } else {
                 searchStatus.text = sText.trim()
@@ -216,7 +218,9 @@ class MainActivity : Activity() {
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
         btn("🚀 Только разведка DID (без лога известных PID, быстрее): старт") { startProbeOnly() }
-        btn("🔁 Проверить ВСЕ найденные PID (кто отвечает сейчас)") { startRecheckAll() }
+        btn("🔁 Проверить ВСЕ найденные PID один раз (кто отвечает сейчас)") { startRecheckAll() }
+        recheckLoopBtn = btn("") { toggleRecheckLoop() }
+        recheckLoopBtn.text = recheckLoopLabel()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -444,6 +448,8 @@ class MainActivity : Activity() {
         Elm.monitoring = false
         Elm.scanning = false
         Elm.scanQueueAbort = true // не даёт перейти к следующему блоку в очереди "Сканер Mode 22"
+        Elm.recheckLoopOn = false
+        if (::recheckLoopBtn.isInitialized) recheckLoopBtn.text = recheckLoopLabel()
         Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
         toast("Останавливаю…")
         Thread {
@@ -571,6 +577,15 @@ class MainActivity : Activity() {
     }
 
     private fun probeLabel() = if (Probe.on) "🔎 Фоновая разведка DID: ВКЛ (нажми = выкл)" else "🔎 Фоновая разведка DID: ВЫКЛ (нажми = вкл)"
+
+    private fun recheckLoopLabel() = if (Elm.recheckLoopOn) "🔁 Непрерывная проверка всех найденных: ВКЛ (нажми = выкл)" else "🔁 Непрерывная проверка всех найденных: ВЫКЛ (нажми = вкл, работает во время обычной записи)"
+
+    private fun toggleRecheckLoop() {
+        if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
+        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn)
+        recheckLoopBtn.text = recheckLoopLabel()
+        if (Elm.recheckLoopOn) toast("Крутится по кругу, пишет в recheck_live_*.csv")
+    }
 
     private fun updateApp() {
         if (busy()) return toast("Останови запись/сканер перед обновлением")
