@@ -441,6 +441,48 @@ object Elm {
         scanning = false
     }
 
+    /** Повторный опрос ВСЕХ уже найденных DID (из probe_found.csv), по блокам, один раз каждый -
+     *  узнать, кто реально откликается прямо сейчас (например, с работающим ДВС) и кто молчит.
+     *  Результат - отдельный recheck_*.csv (did,ecu,was,now,ok) плюс обычный .txt лог. */
+    fun recheckAll(dir: File) {
+        val foundCsv = File(dir, "probe_found.csv")
+        if (!foundCsv.exists()) { scanProgress = "probe_found.csv не найден"; return }
+        data class Row(val ecu: String, val did: String, val was: String)
+        val rows = LinkedHashMap<String, Row>() // ecu+did -> последняя запись (если DID встречался несколько раз)
+        foundCsv.readLines().drop(1).forEach { l ->
+            val c = l.split(",")
+            if (c.size >= 4) rows["${c[1]}|${c[2]}"] = Row(c[1], c[2], c[3])
+        }
+        val byEcu = rows.values.groupBy { it.ecu }
+        val f = File(dir, "recheck_${stamp()}.txt"); currentFile = f
+        val outCsv = File(dir, "recheck_${stamp()}.csv")
+        outCsv.writeText("ecu,did,was,now,ok\n")
+        scanning = true
+        var okN = 0; var deadN = 0
+        f.bufferedWriter().use { w ->
+            w.write("# app version: $appVersion\n# повторная проверка всех найденных DID, блоков: ${byEcu.size}, DID всего: ${rows.size}\n")
+            for ((ecu, list) in byEcu) {
+                if (!scanning || !connected) break
+                setupAddressing(ecu)
+                for (row in list) {
+                    if (!scanning || !connected) break
+                    val r = send("22${row.did}", 800)
+                    val p = positive(r, row.did)
+                    val now = p?.second ?: ""
+                    val ok = p != null
+                    if (ok) okN++ else deadN++
+                    scanProgress = "Проверка найденного: $ecu ${row.did}  отвечают $okN, молчат $deadN"
+                    w.write("$ecu ${row.did} ${if (ok) "OK  $now" else "МОЛЧИТ (" + clean(r).take(40) + ")"}\n"); w.flush()
+                    outCsv.appendText("$ecu,${row.did},${row.was},$now,$ok\n")
+                }
+                restoreAddressing()
+            }
+            w.write("# end: отвечают=$okN молчат=$deadN из ${rows.size}\n")
+        }
+        scanning = false
+        scanProgress = ""
+    }
+
     /** Перебор адресов запроса 700..7FF командой TesterPresent (3E 00, ничего не меняет). Ответ 7E 00 = блок есть. */
     fun findEcus(dir: File) {
         val f = File(dir, "ecus_${stamp()}.txt"); currentFile = f

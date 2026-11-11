@@ -216,6 +216,7 @@ class MainActivity : Activity() {
         btn("Сканер Mode 22: старт") { startScan() }
         btn("Мониторинг DID: старт") { startWatch() }
         btn("🚀 Только разведка DID (без лога известных PID, быстрее): старт") { startProbeOnly() }
+        btn("🔁 Проверить ВСЕ найденные PID (кто отвечает сейчас)") { startRecheckAll() }
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -513,6 +514,13 @@ class MainActivity : Activity() {
                 Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st)
             }
         }.start()
+    }
+
+    private fun startRecheckAll() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.recheckAll(getExternalFilesDir(null)!!) }.start()
     }
 
     private fun startWatch() {
