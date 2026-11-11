@@ -77,12 +77,12 @@ class MainActivity : Activity() {
                 append("Версия приложения: ${Elm.appVersion}\n")
                 if (Probe.on && Elm.logging && Probe.status.isNotEmpty()) append("${Probe.status}\n")
                 append("Статус: ${Elm.status}\n")
-                append("Запись: ${if (Elm.probeOnlyActive) "нет (идёт только разведка DID)" else if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
+                append("Запись: ${if (Elm.probeOnlyActive) "нет (идёт только разведка DID)" else if (Elm.recheckOnlyActive) "нет (идёт только проверка найденных)" else if (Elm.logging) "ИДЁТ" else "нет"}   CAN-монитор: ${if (Elm.monitoring) "ИДЁТ" else "нет"}\n")
                 Elm.currentFile?.let { append("Файл: ${it.name}\n") }
                 if (Elm.scanning || Elm.scanProgress.isNotEmpty()) append("Сканер: ${Elm.scanProgress}\n")
                 val age = (now - Elm.lastDataMs) / 1000
-                if (v.isNotEmpty() && Elm.logging && !Elm.probeOnlyActive && age <= 6) v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
-                else if (v.isNotEmpty() && !Elm.probeOnlyActive) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
+                if (v.isNotEmpty() && Elm.logging && !Elm.probeOnlyActive && !Elm.recheckOnlyActive && age <= 6) v.forEach { (k, x) -> append("$k = ${if (x.isEmpty()) "—" else x}\n") }
+                else if (v.isNotEmpty() && !Elm.probeOnlyActive && !Elm.recheckOnlyActive) append("Показания машины не обновляются${if (Homework.running) " (идёт задание, читаются другие адреса)" else if (!Elm.logging) " (запись не идёт)" else ""}. Последние были ${if (Elm.lastDataMs == 0L) "—" else "$age с назад"}.\n")
                 if (Elm.lastRaw.isNotEmpty()) append("ответ адаптера: ${Elm.lastRaw}\n")
                 append("gps_speed = %.1f км/ч   gps_alt = %.0f м".format(gpsSpeed, gpsAlt))
             }
@@ -221,6 +221,7 @@ class MainActivity : Activity() {
         btn("🔁 Проверить ВСЕ найденные PID один раз (кто отвечает сейчас)") { startRecheckAll() }
         recheckLoopBtn = btn("") { toggleRecheckLoop() }
         recheckLoopBtn.text = recheckLoopLabel()
+        btn("⚡ Только непрерывная проверка найденных (без обычного лога, быстрее)") { startRecheckOnly() }
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -520,6 +521,13 @@ class MainActivity : Activity() {
                 Elm.scanDids(getExternalFilesDir(null)!!, h, a, b, st)
             }
         }.start()
+    }
+
+    private fun startRecheckOnly() {
+        if (!Elm.connected) return toast("Сначала подключись")
+        if (busy()) return toast("Останови текущую запись или сканер")
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+        Thread { Elm.recheckOnlyLoop(getExternalFilesDir(null)!!) }.start()
     }
 
     private fun startRecheckAll() {

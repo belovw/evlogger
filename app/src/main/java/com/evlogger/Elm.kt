@@ -469,11 +469,14 @@ object Elm {
         recheckCsv = f
     }
 
+    @Volatile var recheckLastQueryMs = 0L
+
     /** Вызывается раз в цикл logLoop (как Probe.step) - один запрос по кругу всех найденных DID.
      *  Переключает заголовок через curHeader так же, как это делает Probe - следующий PID обычного
      *  лога сам заметит разницу и переключится обратно, без явного "восстановления" здесь. */
     fun recheckLoopStep() {
         if (!recheckLoopOn || recheckList.isEmpty()) return
+        recheckLastQueryMs = System.currentTimeMillis()
         val (ecu, did) = recheckList[recheckIdx]
         recheckIdx = (recheckIdx + 1) % recheckList.size
         val key = "$ecu>${respAddr(ecu)}"
@@ -484,6 +487,37 @@ object Elm {
         val ok = p != null
         recheckCsv?.appendText("${stamp()},$ecu,$did,$now,$ok\n")
         recheckStatus = "Непрерывная проверка: $ecu $did " + (if (ok) "жив" else "молчит") + " ($recheckIdx/${recheckList.size})"
+    }
+
+    /** То же самое, что и фоновая проверка внутри logLoop, но БЕЗ опроса обычных PID вообще -
+     *  они всё равно все проверяются через probe_found.csv (там и стандартные Mode01, и все Mode22),
+     *  так что опрашивать их отдельно - лишняя трата времени на каждый цикл. Круг получается
+     *  в несколько раз быстрее, чем вперемешку с обычным логом. */
+    @Volatile var recheckOnlyActive = false
+    fun recheckOnlyLoop(dir: File) {
+        logging = true
+        loggingActive = true
+        recheckOnlyActive = true
+        lastDataMs = System.currentTimeMillis()
+        recheckLoopToggle(dir, true)
+        try {
+            send("ATSH7DF"); send("ATAR")
+            curHeader = ""
+            while (logging && connected) {
+                try { recheckLoopStep() } catch (_: Exception) {}
+                val now = System.currentTimeMillis()
+                if (recheckLastQueryMs > lastDataMs) lastDataMs = recheckLastQueryMs
+                if (now - lastDataMs > STALE_DISCONNECT_MS) close()
+            }
+        } catch (e: Exception) {
+            close()
+        } finally {
+            recheckLoopOn = false
+            recheckOnlyActive = false
+            logging = false
+            abortNow = false
+            loggingActive = false
+        }
     }
 
     /** Повторный опрос ВСЕХ уже найденных DID (из probe_found.csv), по блокам, один раз каждый -
