@@ -242,7 +242,10 @@ object Elm {
                     }
                     if (!connected) break // send() уже обнаружил реальный обрыв и сам закрыл сессию
                     try { if (logging) Probe.step(dir, raws) } catch (_: Exception) {}
-                    try { if (logging) recheckLoopStep() } catch (_: Exception) {}
+                    // Несколько recheck-запросов за один цикл лога - иначе круг по узкому списку
+                    // (например фильтр по одному ECU) всё равно тянется минут 20+, а нам нужно
+                    // несколько кругов за одну поездку, чтобы увидеть DID в разных состояниях.
+                    repeat(4) { try { if (logging) recheckLoopStep() } catch (_: Exception) {} }
                     val g = gps()
                     val a = try { alt() } catch (_: Exception) { 0.0 }
                     val now = System.currentTimeMillis()
