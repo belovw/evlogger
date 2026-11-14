@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var probeBtn: Button
     private lateinit var recheckLoopBtn: Button
     private lateinit var recheck7A1Btn: Button
+    private lateinit var recheck7E7Btn: Button
     private lateinit var minimalPidsBtn: Button
     private var minimalPidsOn = false
     private lateinit var info: TextView
@@ -229,6 +230,8 @@ class MainActivity : Activity() {
         recheck7A1Btn.text = recheck7A1Label()
         minimalPidsBtn = btn("") { toggleMinimalPids() }
         minimalPidsBtn.text = minimalPidsLabel()
+        recheck7E7Btn = btn("") { toggleRecheck7E7() }
+        recheck7E7Btn.text = recheck7E7Label()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -460,6 +463,7 @@ class MainActivity : Activity() {
         Elm.recheckLoopOn = false
         if (::recheckLoopBtn.isInitialized) recheckLoopBtn.text = recheckLoopLabel()
         if (::recheck7A1Btn.isInitialized) recheck7A1Btn.text = recheck7A1Label()
+        if (::recheck7E7Btn.isInitialized) recheck7E7Btn.text = recheck7E7Label()
         Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
         toast("Останавливаю…")
         Thread {
@@ -629,6 +633,20 @@ class MainActivity : Activity() {
         recheckLoopBtn.text = recheckLoopLabel()
         recheck7A1Btn.text = recheck7A1Label()
         if (Elm.recheckLoopOn) toast("Крутим только 7A1 (343 DID), пишет в recheck_live_7A1_*.csv")
+    }
+
+    private fun recheck7E7Label() = if (Elm.recheckLoopOn) "⚡ Быстрая проверка блока 7E7 (35 DID, токи генератора - кандидат): ВКЛ (нажми = выкл)" else "⚡ Быстрая проверка блока 7E7 (35 DID, токи генератора - кандидат): ВЫКЛ (нажми = вкл, во время обычной записи)"
+
+    /** Как toggleRecheck7A1, но для блока 7E7 (35 DID - судя по сырым значениям, похожим на токи
+     *  в той же конвенции смещения 10000 что и batt_a, разброс там уже в одном снимке -132..+90А -
+     *  куда более вероятный кандидат на мощность тяги/генератора, чем 7A1). */
+    private fun toggleRecheck7E7() {
+        if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
+        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn, "7E7")
+        recheckLoopBtn.text = recheckLoopLabel()
+        recheck7A1Btn.text = recheck7A1Label()
+        recheck7E7Btn.text = recheck7E7Label()
+        if (Elm.recheckLoopOn) toast("Крутим только 7E7 (35 DID), пишет в recheck_live_7E7_*.csv")
     }
 
     private fun updateApp() {
