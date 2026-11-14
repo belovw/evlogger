@@ -30,6 +30,7 @@ class MainActivity : Activity() {
     private lateinit var spinner: Spinner
     private lateinit var probeBtn: Button
     private lateinit var recheckLoopBtn: Button
+    private lateinit var recheck7A1Btn: Button
     private lateinit var info: TextView
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
@@ -222,6 +223,8 @@ class MainActivity : Activity() {
         recheckLoopBtn = btn("") { toggleRecheckLoop() }
         recheckLoopBtn.text = recheckLoopLabel()
         btn("⚡ Только непрерывная проверка найденных (без обычного лога, быстрее)") { startRecheckOnly() }
+        recheck7A1Btn = btn("") { toggleRecheck7A1() }
+        recheck7A1Btn.text = recheck7A1Label()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -451,6 +454,7 @@ class MainActivity : Activity() {
         Elm.scanQueueAbort = true // не даёт перейти к следующему блоку в очереди "Сканер Mode 22"
         Elm.recheckLoopOn = false
         if (::recheckLoopBtn.isInitialized) recheckLoopBtn.text = recheckLoopLabel()
+        if (::recheck7A1Btn.isInitialized) recheck7A1Btn.text = recheck7A1Label()
         Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
         toast("Останавливаю…")
         Thread {
@@ -593,6 +597,20 @@ class MainActivity : Activity() {
         Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn)
         recheckLoopBtn.text = recheckLoopLabel()
         if (Elm.recheckLoopOn) toast("Крутится по кругу, пишет в recheck_live_*.csv")
+    }
+
+    private fun recheck7A1Label() = if (Elm.recheckLoopOn) "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВКЛ (нажми = выкл)" else "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВЫКЛ (нажми = вкл, во время обычной записи)"
+
+    /** Как toggleRecheckLoop, но крутит ТОЛЬКО блок 7A1 (343 найденных DID вместо 800+) -
+     *  круг получается в разы быстрее, за одну поездку набирается много повторов одного и того же
+     *  DID в разных состояниях (стоим/едем/тормозим) - то, что нужно для поиска параметра мощности
+     *  тягового электродвигателя по корреляции со speed/rpm/batt_a. */
+    private fun toggleRecheck7A1() {
+        if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
+        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn, "7A1")
+        recheckLoopBtn.text = recheckLoopLabel()
+        recheck7A1Btn.text = recheck7A1Label()
+        if (Elm.recheckLoopOn) toast("Крутим только 7A1 (343 DID), пишет в recheck_live_7A1_*.csv")
     }
 
     private fun updateApp() {

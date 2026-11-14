@@ -453,18 +453,19 @@ object Elm {
      *  но не ищет новое, а раз за разом опрашивает уже известные, с таймстемпом каждого ответа.
      *  Удобно смотреть прямо во время поездки, кто отвечает/молчит в динамике (скорость, режим ДВС,
      *  заряд и т.п.), без повторных нажатий кнопки. */
-    fun recheckLoopToggle(dir: File, on: Boolean) {
+    fun recheckLoopToggle(dir: File, on: Boolean, ecuFilter: String? = null) {
         recheckLoopOn = on
         if (!on) { recheckStatus = ""; return }
         val foundCsv = File(dir, "probe_found.csv")
         val rows = LinkedHashMap<String, Pair<String, String>>()
         if (foundCsv.exists()) foundCsv.readLines().drop(1).forEach { l ->
             val c = l.split(",")
-            if (c.size >= 4) rows["${c[1]}|${c[2]}"] = c[1] to c[2]
+            if (c.size >= 4 && (ecuFilter == null || c[1] == ecuFilter)) rows["${c[1]}|${c[2]}"] = c[1] to c[2]
         }
         recheckList = rows.values.toList()
         recheckIdx = 0
-        val f = File(dir, "recheck_live_${stamp()}.csv")
+        val tag = if (ecuFilter != null) "_${ecuFilter}" else ""
+        val f = File(dir, "recheck_live${tag}_${stamp()}.csv")
         f.writeText("time,ecu,did,now,ok\n")
         recheckCsv = f
     }
