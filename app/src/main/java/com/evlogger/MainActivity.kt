@@ -30,8 +30,7 @@ class MainActivity : Activity() {
     private lateinit var spinner: Spinner
     private lateinit var probeBtn: Button
     private lateinit var recheckLoopBtn: Button
-    private lateinit var recheck7A1Btn: Button
-    private lateinit var recheck7E7Btn: Button
+    private lateinit var recheckTargetBtn: Button
     private lateinit var minimalPidsBtn: Button
     private var minimalPidsOn = false
     private lateinit var info: TextView
@@ -223,15 +222,13 @@ class MainActivity : Activity() {
         btn("Мониторинг DID: старт") { startWatch() }
         btn("🚀 Только разведка DID (без лога известных PID, быстрее): старт") { startProbeOnly() }
         btn("🔁 Проверить ВСЕ найденные PID один раз (кто отвечает сейчас)") { startRecheckAll() }
-        recheckLoopBtn = btn("") { toggleRecheckLoop() }
-        recheckLoopBtn.text = recheckLoopLabel()
         btn("⚡ Только непрерывная проверка найденных (без обычного лога, быстрее)") { startRecheckOnly() }
-        recheck7A1Btn = btn("") { toggleRecheck7A1() }
-        recheck7A1Btn.text = recheck7A1Label()
         minimalPidsBtn = btn("") { toggleMinimalPids() }
         minimalPidsBtn.text = minimalPidsLabel()
-        recheck7E7Btn = btn("") { toggleRecheck7E7() }
-        recheck7E7Btn.text = recheck7E7Label()
+        recheckTargetBtn = btn("") { cycleRecheckTarget() }
+        recheckTargetBtn.text = recheckTargetLabel()
+        recheckLoopBtn = btn("") { toggleRecheckLoop() }
+        recheckLoopBtn.text = recheckLoopLabel()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -462,8 +459,6 @@ class MainActivity : Activity() {
         Elm.scanQueueAbort = true // не даёт перейти к следующему блоку в очереди "Сканер Mode 22"
         Elm.recheckLoopOn = false
         if (::recheckLoopBtn.isInitialized) recheckLoopBtn.text = recheckLoopLabel()
-        if (::recheck7A1Btn.isInitialized) recheck7A1Btn.text = recheck7A1Label()
-        if (::recheck7E7Btn.isInitialized) recheck7E7Btn.text = recheck7E7Label()
         Elm.abortNow = true // принудительно прерываем текущее ожидание ответа в send(), не ждём его таймаут
         toast("Останавливаю…")
         Thread {
@@ -599,16 +594,47 @@ class MainActivity : Activity() {
 
     private fun probeLabel() = if (Probe.on) "🔎 Фоновая разведка DID: ВКЛ (нажми = выкл)" else "🔎 Фоновая разведка DID: ВЫКЛ (нажми = вкл)"
 
-    private fun recheckLoopLabel() = if (Elm.recheckLoopOn) "🔁 Непрерывная проверка всех найденных: ВКЛ (нажми = выкл)" else "🔁 Непрерывная проверка всех найденных: ВЫКЛ (нажми = вкл, работает во время обычной записи)"
+    // --- Непрерывная проверка найденных DID: ОДНА цель + ОДИН старт/стоп, без путаницы. ---
+    // Раньше у каждой цели (всё/7A1/7E7/шорт-лист) была своя кнопка-переключатель, но все они
+    // дёргали один и тот же Elm.recheckLoopOn - если проверка уже шла, нажатие другой кнопки
+    // просто гасило её вместо смены цели. Теперь цель выбирается отдельно, а старт/стоп - отдельно.
+    private data class RecheckTarget(val label: String, val ecuFilter: String?, val explicit: List<Pair<String, String>>?, val tag: String?)
+    private val recheckTargets = listOf(
+        RecheckTarget("Все найденные (800+)", null, null, null),
+        RecheckTarget("Блок 7A1 (343 DID)", "7A1", null, "_7A1"),
+        RecheckTarget("Блок 7E7 (35 DID, генератор)", "7E7", null, "_7E7"),
+        RecheckTarget("Шорт-лист кандидатов на мощность (11 DID)", null, Elm.POWER_CANDIDATES, "_shortlist")
+    )
+    private var recheckTargetIdx = 1 // по умолчанию 7A1 - самая частая цель в этом тесте
+
+    private fun recheckTargetLabel() = "🎯 Цель проверки: ${recheckTargets[recheckTargetIdx].label} (нажми = сменить)"
+
+    /** Переключает ЦЕЛЬ без влияния на то, идёт ли сейчас проверка. Если проверка уже шла - она
+     *  перезапускается на новую цель на лету (recheckLoopOn не трогаем для пользователя, но
+     *  внутри делаем toggle off+on, чтобы recheckList пересобрался под новую цель). */
+    private fun cycleRecheckTarget() {
+        recheckTargetIdx = (recheckTargetIdx + 1) % recheckTargets.size
+        recheckTargetBtn.text = recheckTargetLabel()
+        if (Elm.recheckLoopOn) applyRecheckTarget() // уже крутится - сразу переключить на новую цель
+    }
+
+    private fun applyRecheckTarget() {
+        val t = recheckTargets[recheckTargetIdx]
+        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, true, t.ecuFilter, t.explicit, t.tag)
+    }
+
+    private fun recheckLoopLabel() = if (Elm.recheckLoopOn) "🔁 Непрерывная проверка: ВКЛ (нажми = выкл)" else "🔁 Непрерывная проверка: ВЫКЛ (нажми = вкл с выбранной выше целью, работает во время обычной записи)"
 
     private fun toggleRecheckLoop() {
         if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
-        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn)
+        if (Elm.recheckLoopOn) {
+            Elm.recheckLoopToggle(getExternalFilesDir(null)!!, false)
+        } else {
+            applyRecheckTarget()
+        }
         recheckLoopBtn.text = recheckLoopLabel()
-        if (Elm.recheckLoopOn) toast("Крутится по кругу, пишет в recheck_live_*.csv")
+        if (Elm.recheckLoopOn) toast("Крутится: ${recheckTargets[recheckTargetIdx].label}")
     }
-
-    private fun recheck7A1Label() = if (Elm.recheckLoopOn) "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВКЛ (нажми = выкл)" else "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВЫКЛ (нажми = вкл, во время обычной записи)"
 
     private fun minimalPidsLabel() = if (minimalPidsOn) "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВКЛ (нажми = выкл, вернуть обычный лог)" else "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВЫКЛ (нажми = вкл перед стартом записи)"
 
@@ -621,32 +647,6 @@ class MainActivity : Activity() {
         Elm.RECHECK_BATCH = if (minimalPidsOn) 15 else 4
         minimalPidsBtn.text = minimalPidsLabel()
         toast(if (minimalPidsOn) "Включено - перезапусти запись лога, чтобы применилось" else "Выключено - вернулся обычный список PID")
-    }
-
-    /** Как toggleRecheckLoop, но крутит ТОЛЬКО блок 7A1 (343 найденных DID вместо 800+) -
-     *  круг получается в разы быстрее, за одну поездку набирается много повторов одного и того же
-     *  DID в разных состояниях (стоим/едем/тормозим) - то, что нужно для поиска параметра мощности
-     *  тягового электродвигателя по корреляции со speed/rpm/batt_a. */
-    private fun toggleRecheck7A1() {
-        if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
-        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn, "7A1")
-        recheckLoopBtn.text = recheckLoopLabel()
-        recheck7A1Btn.text = recheck7A1Label()
-        if (Elm.recheckLoopOn) toast("Крутим только 7A1 (343 DID), пишет в recheck_live_7A1_*.csv")
-    }
-
-    private fun recheck7E7Label() = if (Elm.recheckLoopOn) "⚡ Быстрая проверка блока 7E7 (35 DID, токи генератора - кандидат): ВКЛ (нажми = выкл)" else "⚡ Быстрая проверка блока 7E7 (35 DID, токи генератора - кандидат): ВЫКЛ (нажми = вкл, во время обычной записи)"
-
-    /** Как toggleRecheck7A1, но для блока 7E7 (35 DID - судя по сырым значениям, похожим на токи
-     *  в той же конвенции смещения 10000 что и batt_a, разброс там уже в одном снимке -132..+90А -
-     *  куда более вероятный кандидат на мощность тяги/генератора, чем 7A1). */
-    private fun toggleRecheck7E7() {
-        if (!Elm.recheckLoopOn && !Elm.logging) return toast("Включи сначала обычную запись - проверка крутится вместе с ней")
-        Elm.recheckLoopToggle(getExternalFilesDir(null)!!, !Elm.recheckLoopOn, "7E7")
-        recheckLoopBtn.text = recheckLoopLabel()
-        recheck7A1Btn.text = recheck7A1Label()
-        recheck7E7Btn.text = recheck7E7Label()
-        if (Elm.recheckLoopOn) toast("Крутим только 7E7 (35 DID), пишет в recheck_live_7E7_*.csv")
     }
 
     private fun updateApp() {

@@ -471,22 +471,37 @@ batt_a ; 7A1>7A9 ; 22F229 ; (A*256+B-10000)/10
      *  но не ищет новое, а раз за разом опрашивает уже известные, с таймстемпом каждого ответа.
      *  Удобно смотреть прямо во время поездки, кто отвечает/молчит в динамике (скорость, режим ДВС,
      *  заряд и т.п.), без повторных нажатий кнопки. */
-    fun recheckLoopToggle(dir: File, on: Boolean, ecuFilter: String? = null) {
+    fun recheckLoopToggle(dir: File, on: Boolean, ecuFilter: String? = null, explicitList: List<Pair<String, String>>? = null, tagOverride: String? = null) {
         recheckLoopOn = on
         if (!on) { recheckStatus = ""; return }
-        val foundCsv = File(dir, "probe_found.csv")
-        val rows = LinkedHashMap<String, Pair<String, String>>()
-        if (foundCsv.exists()) foundCsv.readLines().drop(1).forEach { l ->
-            val c = l.split(",")
-            if (c.size >= 4 && (ecuFilter == null || c[1] == ecuFilter)) rows["${c[1]}|${c[2]}"] = c[1] to c[2]
+        if (explicitList != null) {
+            recheckList = explicitList
+        } else {
+            val foundCsv = File(dir, "probe_found.csv")
+            val rows = LinkedHashMap<String, Pair<String, String>>()
+            if (foundCsv.exists()) foundCsv.readLines().drop(1).forEach { l ->
+                val c = l.split(",")
+                if (c.size >= 4 && (ecuFilter == null || c[1] == ecuFilter)) rows["${c[1]}|${c[2]}"] = c[1] to c[2]
+            }
+            recheckList = rows.values.toList()
         }
-        recheckList = rows.values.toList()
         recheckIdx = 0
-        val tag = if (ecuFilter != null) "_${ecuFilter}" else ""
+        val tag = tagOverride ?: (if (ecuFilter != null) "_${ecuFilter}" else "")
         val f = File(dir, "recheck_live${tag}_${stamp()}.csv")
         f.writeText("time,ecu,did,now,ok\n")
         recheckCsv = f
     }
+
+    /** Шорт-лист кандидатов на мощность тяги/генератора - собран по форме сырых значений в
+     *  probe_found.csv (конвенция смещения 10000, как у batt_a, с заметным отклонением от
+     *  нейтрального ~10000 в последнем известном снимке). Блок 7A1 (F2xx-F3xx) и генераторные
+     *  токи 7E7 080B/080C/080F по отдельности уже проверены и не дали чёткой корреляции - здесь
+     *  добор новых кандидатов + остальные неисследованные токи того же блока. */
+    val POWER_CANDIDATES: List<Pair<String, String>> = listOf(
+        "7E0" to "040E", "7E0" to "F40C", "7E0" to "F43C", "7E0" to "F442",
+        "7E7" to "0815", "7E7" to "080D", "7E7" to "080E", "7E7" to "0810", "7E7" to "0811", "7E7" to "0812",
+        "7A1" to "F254"
+    )
 
     /** Сколько recheck-запросов делать за один цикл логгера. С урезанным MINIMAL_PIDS_TEXT
      *  (4 обычных запроса) цикл всё равно короткий, так что можно гнать recheck плотно. */
