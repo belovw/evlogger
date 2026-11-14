@@ -147,6 +147,16 @@ object Elm {
         }
     }
 
+    /** Урезанный список - только то, что нужно для поиска параметра мощности тяги
+     *  (корреляция с speed/rpm/batt_a): остальные ~28 обычных полей на время теста
+     *  не опрашиваем, освобождая время цикла под recheck-запросы. */
+    const val MINIMAL_PIDS_TEXT = """
+speed_kmh ; 7E8 ; 010D ; A
+rpm ; 7E8 ; 010C ; (A*256+B)/4
+batt_v ; 7A1>7A9 ; 22F228 ; (A*256+B)/10
+batt_a ; 7A1>7A9 ; 22F229 ; (A*256+B-10000)/10
+"""
+
     fun loadPids(text: String): List<Pid> = text.lines()
         .map { it.trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") }
@@ -176,12 +186,17 @@ object Elm {
         } catch (e: Exception) { "" }
     }
 
+    /** Переключатель урезанного списка PID (см. MINIMAL_PIDS_TEXT) - ставится из UI,
+     *  действует и на ручной startLog(), и на автозапуск ниже. */
+    @Volatile var useMinimalPids = false
+
     /** Запуск обычной записи лога в фоне (после подключения и после сессий). */
     fun startAutoLog(ctx: android.content.Context, dir: File, gps: () -> Triple<Double, Double, Double>, alt: () -> Double = { 0.0 }) {
         if (logging || !connected) return
         try {
             val custom = File(dir, "pids.txt")
-            val list = loadPids(if (custom.exists()) custom.readText() else ctx.assets.open("pids.txt").bufferedReader().readText())
+            val list = loadPids(if (useMinimalPids) MINIMAL_PIDS_TEXT
+                                 else if (custom.exists()) custom.readText() else ctx.assets.open("pids.txt").bufferedReader().readText())
             autoLog = true
             Thread { logLoop(dir, list, gps, alt) }.start()
         } catch (_: Exception) { autoLog = false }
@@ -245,7 +260,7 @@ object Elm {
                     // Несколько recheck-запросов за один цикл лога - иначе круг по узкому списку
                     // (например фильтр по одному ECU) всё равно тянется минут 20+, а нам нужно
                     // несколько кругов за одну поездку, чтобы увидеть DID в разных состояниях.
-                    repeat(4) { try { if (logging) recheckLoopStep() } catch (_: Exception) {} }
+                    repeat(RECHECK_BATCH) { try { if (logging) recheckLoopStep() } catch (_: Exception) {} }
                     val g = gps()
                     val a = try { alt() } catch (_: Exception) { 0.0 }
                     val now = System.currentTimeMillis()
@@ -472,6 +487,10 @@ object Elm {
         f.writeText("time,ecu,did,now,ok\n")
         recheckCsv = f
     }
+
+    /** Сколько recheck-запросов делать за один цикл логгера. С урезанным MINIMAL_PIDS_TEXT
+     *  (4 обычных запроса) цикл всё равно короткий, так что можно гнать recheck плотно. */
+    @Volatile var RECHECK_BATCH = 4
 
     @Volatile var recheckLastQueryMs = 0L
 

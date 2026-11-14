@@ -31,6 +31,8 @@ class MainActivity : Activity() {
     private lateinit var probeBtn: Button
     private lateinit var recheckLoopBtn: Button
     private lateinit var recheck7A1Btn: Button
+    private lateinit var minimalPidsBtn: Button
+    private var minimalPidsOn = false
     private lateinit var info: TextView
     private lateinit var term: TextView
     private lateinit var cmdBox: EditText
@@ -225,6 +227,8 @@ class MainActivity : Activity() {
         btn("⚡ Только непрерывная проверка найденных (без обычного лога, быстрее)") { startRecheckOnly() }
         recheck7A1Btn = btn("") { toggleRecheck7A1() }
         recheck7A1Btn.text = recheck7A1Label()
+        minimalPidsBtn = btn("") { toggleMinimalPids() }
+        minimalPidsBtn.text = minimalPidsLabel()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
@@ -442,7 +446,8 @@ class MainActivity : Activity() {
         startForegroundService(Intent(this, KeepAliveService::class.java))
         val pids = Elm.loadPids(assets.open("pids.txt").bufferedReader().readText())
         val custom = java.io.File(getExternalFilesDir(null), "pids.txt")
-        val list = if (custom.exists()) Elm.loadPids(custom.readText()) else pids
+        val list = if (minimalPidsOn) Elm.loadPids(Elm.MINIMAL_PIDS_TEXT)
+                   else if (custom.exists()) Elm.loadPids(custom.readText()) else pids
         Thread { Elm.logLoop(getExternalFilesDir(null)!!, list, { Triple(gpsLat, gpsLon, gpsSpeed) }, { gpsAlt }) }.start()
     }
 
@@ -600,6 +605,19 @@ class MainActivity : Activity() {
     }
 
     private fun recheck7A1Label() = if (Elm.recheckLoopOn) "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВКЛ (нажми = выкл)" else "⚡ Быстрая проверка только блока 7A1 (343 DID, ищем мощность тяги): ВЫКЛ (нажми = вкл, во время обычной записи)"
+
+    private fun minimalPidsLabel() = if (minimalPidsOn) "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВКЛ (нажми = выкл, вернуть обычный лог)" else "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВЫКЛ (нажми = вкл перед стартом записи)"
+
+    /** Переключатель урезанного списка PID: применяется только к СЛЕДУЮЩЕМУ запуску обычной записи
+     *  (startLog/автостарт) - освобождает время цикла почти целиком под recheck. Останови и
+     *  перезапусти запись, если она уже идёт, чтобы список применился. */
+    private fun toggleMinimalPids() {
+        minimalPidsOn = !minimalPidsOn
+        Elm.useMinimalPids = minimalPidsOn
+        Elm.RECHECK_BATCH = if (minimalPidsOn) 15 else 4
+        minimalPidsBtn.text = minimalPidsLabel()
+        toast(if (minimalPidsOn) "Включено - перезапусти запись лога, чтобы применилось" else "Выключено - вернулся обычный список PID")
+    }
 
     /** Как toggleRecheckLoop, но крутит ТОЛЬКО блок 7A1 (343 найденных DID вместо 800+) -
      *  круг получается в разы быстрее, за одну поездку набирается много повторов одного и того же
