@@ -145,7 +145,17 @@ class MainActivity : Activity() {
         btn("Подключиться к ELM327 (запись и разведка пойдут сами)") { connect() }
         info = TextView(this).apply { textSize = 13f; setPadding(4, 16, 4, 8) }
         root.addView(info)
+        btn("▶ СТАРТ ЗАПИСИ ЛОГА") { startLog() }
         btn("■ СТОП (запись, разведка, задания)") { stopAll() }
+
+        // ===================== ПРОВЕРКА ГИПОТЕЗ (всё, что нужно для теста, в одном месте наверху) =====================
+        title("ПРОВЕРКА (сначала старт записи, потом кнопка ниже)")
+        minimalPidsBtn = btn("") { toggleMinimalPids() }
+        minimalPidsBtn.text = minimalPidsLabel()
+        recheckTargetBtn = btn("") { cycleRecheckTarget() }
+        recheckTargetBtn.text = recheckTargetLabel()
+        recheckLoopBtn = btn("") { toggleRecheckLoop() }
+        recheckLoopBtn.text = recheckLoopLabel()
 
         // ===================== ПАНЕЛЬ ПОИСКА (общие поля для вкладок "Поиск блоков" и "Поиск PID") =====================
         title("Параметры поиска (используются вкладками «Поиск блоков» и «Поиск PID»)")
@@ -193,7 +203,6 @@ class MainActivity : Activity() {
 
         // --- Вкладка: Логирование ---
         target = tabPanels[0]
-        btn("Запись лога: старт (обычно не нужна, стартует сама)") { startLog() }
         btn("CAN-монитор: старт") { startMonitor() }
         btn("📤 Отправить всё и очистить") { sendAll() }
         btn("🔋 Разрешить работу в фоне (если запись слетает после сворачивания)") { requestIgnoreBatteryOptimizations() }
@@ -223,12 +232,6 @@ class MainActivity : Activity() {
         btn("🚀 Только разведка DID (без лога известных PID, быстрее): старт") { startProbeOnly() }
         btn("🔁 Проверить ВСЕ найденные PID один раз (кто отвечает сейчас)") { startRecheckAll() }
         btn("⚡ Только непрерывная проверка найденных (без обычного лога, быстрее)") { startRecheckOnly() }
-        minimalPidsBtn = btn("") { toggleMinimalPids() }
-        minimalPidsBtn.text = minimalPidsLabel()
-        recheckTargetBtn = btn("") { cycleRecheckTarget() }
-        recheckTargetBtn.text = recheckTargetLabel()
-        recheckLoopBtn = btn("") { toggleRecheckLoop() }
-        recheckLoopBtn.text = recheckLoopLabel()
 
         // --- Вкладка: Инструменты ---
         target = tabPanels[4]
