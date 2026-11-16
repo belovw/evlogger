@@ -600,12 +600,13 @@ class MainActivity : Activity() {
     // просто гасило её вместо смены цели. Теперь цель выбирается отдельно, а старт/стоп - отдельно.
     private data class RecheckTarget(val label: String, val ecuFilter: String?, val explicit: List<Pair<String, String>>?, val tag: String?)
     private val recheckTargets = listOf(
+        RecheckTarget("Проверка генератора (8 DID: 0812, 0801/0802, 0806...)", null, Elm.GEN_VERIFY_LIST, "_genverify"),
         RecheckTarget("Все найденные (800+)", null, null, null),
         RecheckTarget("Блок 7A1 (343 DID)", "7A1", null, "_7A1"),
         RecheckTarget("Блок 7E7 (35 DID, генератор)", "7E7", null, "_7E7"),
         RecheckTarget("Шорт-лист кандидатов на мощность (11 DID)", null, Elm.POWER_CANDIDATES, "_shortlist")
     )
-    private var recheckTargetIdx = 1 // по умолчанию 7A1 - самая частая цель в этом тесте
+    private var recheckTargetIdx = 0 // по умолчанию - проверка генератора
 
     private fun recheckTargetLabel() = "🎯 Цель проверки: ${recheckTargets[recheckTargetIdx].label} (нажми = сменить)"
 
@@ -620,6 +621,9 @@ class MainActivity : Activity() {
 
     private fun applyRecheckTarget() {
         val t = recheckTargets[recheckTargetIdx]
+        // Фоновая разведка DID занимает ту же шину ELM и ломает частоту опроса рекheck-цели -
+        // на время проверки её выключаем (в предыдущем логе она крутилась параллельно и recheck не записался).
+        if (Probe.on) { Probe.enable(false); if (::probeBtn.isInitialized) probeBtn.text = probeLabel() }
         Elm.recheckLoopToggle(getExternalFilesDir(null)!!, true, t.ecuFilter, t.explicit, t.tag)
     }
 
