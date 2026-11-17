@@ -156,6 +156,11 @@ rpm ; 7E8 ; 010C ; (A*256+B)/4
 batt_v ; 7A1>7A9 ; 22F228 ; (A*256+B)/10
 batt_a ; 7A1>7A9 ; 22F229 ; (A*256+B-10000)/10
 soc_5b_pct ; 7EA ; 015B ; A*100/255
+load_pct ; 7E8 ; 0104 ; A*100/255
+fuel_pct ; 7E8 ; 012F ; A*100/255
+odo_f4a6 ; 7E0>7E8 ; 22F4A6 ; (A*16777216+B*65536+C*256+D)/10
+soc_f22f ; 7A1>7A9 ; 22F22F ; (A*256+B)/10
+e_012b ; 7E8 ; 22012B ; A*256+B
 """
 
     fun loadPids(text: String): List<Pid> = text.lines()
