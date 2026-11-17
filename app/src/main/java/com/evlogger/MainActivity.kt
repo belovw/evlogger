@@ -643,7 +643,7 @@ class MainActivity : Activity() {
         if (Elm.recheckLoopOn) toast("Крутится: ${recheckTargets[recheckTargetIdx].label}")
     }
 
-    private fun minimalPidsLabel() = if (minimalPidsOn) "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВКЛ (нажми = выкл, вернуть обычный лог)" else "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a): ВЫКЛ (нажми = вкл перед стартом записи)"
+    private fun minimalPidsLabel() = if (minimalPidsOn) "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a/soc): ВКЛ (нажми = выкл, вернуть обычный лог)" else "🧪 Минимальный список PID для теста мощности (speed/rpm/batt_v/batt_a/soc): ВЫКЛ (нажми = вкл перед стартом записи)"
 
     /** Переключатель урезанного списка PID: применяется только к СЛЕДУЮЩЕМУ запуску обычной записи
      *  (startLog/автостарт) - освобождает время цикла почти целиком под recheck. Останови и

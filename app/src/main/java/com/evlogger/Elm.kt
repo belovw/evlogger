@@ -155,6 +155,7 @@ speed_kmh ; 7E8 ; 010D ; A
 rpm ; 7E8 ; 010C ; (A*256+B)/4
 batt_v ; 7A1>7A9 ; 22F228 ; (A*256+B)/10
 batt_a ; 7A1>7A9 ; 22F229 ; (A*256+B-10000)/10
+soc_5b_pct ; 7EA ; 015B ; A*100/255
 """
 
     fun loadPids(text: String): List<Pid> = text.lines()
